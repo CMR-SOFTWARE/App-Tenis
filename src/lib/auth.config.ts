@@ -50,9 +50,9 @@ export const authConfig: NextAuthConfig = {
     // Se usa en el proxy para proteger rutas sin tocar la BD
     authorized({ auth, request: { nextUrl } }) {
       const isLoggedIn = !!auth?.user
-      const isPublic = ["/login", "/api/auth"].some((p) =>
-        nextUrl.pathname.startsWith(p)
-      )
+      const isPublic =
+        nextUrl.pathname === "/" ||
+        ["/login", "/api/auth"].some((p) => nextUrl.pathname.startsWith(p))
       if (isPublic) return true
       if (!isLoggedIn) return false
       return true
