@@ -10,9 +10,16 @@ import { notFound } from "next/navigation"
 import { db } from "@/lib/db"
 import Link from "next/link"
 
-export default async function LandingPage() {
+export default async function LandingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ subdominio?: string }>
+}) {
   const headersList = await headers()
-  const subdominio = headersList.get("x-subdominio")
+  const params = await searchParams
+  // En producción el subdominio viene del header (inyectado por proxy.ts)
+  // En desarrollo se puede pasar como ?subdominio=xxx para probar sin dominio real
+  const subdominio = headersList.get("x-subdominio") ?? params.subdominio ?? null
 
   // Buscar tenant en BD solo si hay subdominio
   let tenant: Awaited<ReturnType<typeof db.tenant.findUnique>> = null
