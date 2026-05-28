@@ -1,0 +1,203 @@
+// Schema de la base de datos de AcePro
+// Prisma lee este archivo y genera:
+//   1. Las tablas en PostgreSQL (con: npx prisma migrate dev)
+//   2. Los tipos TypeScript para usar en el código
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  // La URL viene de prisma.config.ts → lee el .env
+}
+
+// ============================================================
+// ENUMS — valores fijos posibles para un campo
+// ============================================================
+
+enum TenantTipo {
+  PROFESOR
+  CLUB
+}
+
+enum UserRol {
+  SUPER_ADMIN   // Lucas — acceso total a todo
+  TENANT_OWNER  // El profe — gestiona su propio tenant
+  STUDENT       // Alumno — reserva turnos
+}
+
+enum AlumnoEstado {
+  STANDBY    // Se registró pero espera que el profe lo apruebe
+  ACTIVO     // Aprobado, puede ver y reservar turnos
+  SUSPENDIDO // No pagó la mensualidad, no puede reservar
+  INACTIVO   // Dado de baja por el profe
+}
+
+enum BookingEstado {
+  CONFIRMADO
+  CANCELADO
+  LIBERADO   // Cancelado y disponible para que otro alumno lo tome
+}
+
+enum PagoEstado {
+  PENDIENTE
+  CONFIRMADO
+  FALLIDO
+  REEMBOLSADO
+}
+
+// ============================================================
+// TABLAS DE AUTH.JS
+// Estas tablas las necesita Auth.js para manejar sesiones y OAuth
+// No las tocamos nosotros directamente, Auth.js las gestiona solo
+// ============================================================
+
+// USER — extendido con los campos que requiere Auth.js
+model User {
+  id            String        @id @default(cuid())
+  email         String        @unique
+  name          String?       // campo estándar de Auth.js (viene de Google: "Juan Pérez")
+  nombre        String?       // nombre propio, se completa en el onboarding
+  apellido      String?       // apellido, se completa en el onboarding
+  telefono      String?
+
+  // Campos requeridos por Auth.js
+  emailVerified DateTime?     // null = email no verificado todavía
+  image         String?       // foto de perfil (viene de Google OAuth)
+
+  rol           UserRol       @default(STUDENT)
+  alumnoEstado  AlumnoEstado?
+
+  tenantId      String?
+  tenant        Tenant?       @relation(fields: [tenantId], references: [id])
+
+  creadoEn      DateTime      @default(now())
+  actualizadoEn DateTime      @updatedAt
+
+  // Relaciones propias
+  reservas      Booking[]
+  pagos         Pago[]
+
+  // Relaciones de Auth.js — no las usamos directamente
+  accounts      Account[]
+  sessions      Session[]
+
+  @@map("users")
+}
+
+// ACCOUNT — cuenta OAuth vinculada a un usuario
+// Ejemplo: si alguien se loguea con Google, se guarda acá el token de Google
+// Un usuario puede tener múltiples cuentas (Google + email)
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String  // "google", "credentials", etc.
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Un proveedor no puede estar duplicado para el mismo usuario
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+// SESSION — sesión activa de un usuario logueado
+// Auth.js la crea al hacer login y la borra al hacer logout
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime // cuándo expira la sesión
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// VERIFICATION_TOKEN — token para verificar el email
+// Cuando alguien se registra, recibe un email con un link que contiene este token
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ============================================================
+// TABLAS PRINCIPALES DE LA APP
+// ============================================================
+
+model Tenant {
+  id                String       @id @default(cuid())
+  subdominio        String       @unique
+  tipo              TenantTipo   @default(PROFESOR)
+  nombre            String
+  suscripcionActiva Boolean      @default(true)
+  creadoEn          DateTime     @default(now())
+  actualizadoEn     DateTime     @updatedAt
+
+  usuarios          User[]
+  turnos            ScheduleSlot[]
+  pagos             Pago[]
+
+  @@map("tenants")
+}
+
+model ScheduleSlot {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  diaSemana   Int       // 0=domingo, 1=lunes, ..., 6=sábado
+  horaInicio  String    // "HH:MM"
+  duracionMin Int       @default(60)
+  activo      Boolean   @default(true)
+  creadoEn    DateTime  @default(now())
+
+  reservas    Booking[]
+
+  @@map("schedule_slots")
+}
+
+model Booking {
+  id            String        @id @default(cuid())
+  slotId        String
+  slot          ScheduleSlot  @relation(fields: [slotId], references: [id])
+  studentId     String
+  student       User          @relation(fields: [studentId], references: [id])
+  fecha         DateTime
+  estado        BookingEstado @default(CONFIRMADO)
+  reasignadoDe  String?
+  creadoEn      DateTime      @default(now())
+  actualizadoEn DateTime      @updatedAt
+
+  @@map("bookings")
+}
+
+model Pago {
+  id          String     @id @default(cuid())
+  tenantId    String
+  tenant      Tenant     @relation(fields: [tenantId], references: [id])
+  userId      String
+  user        User       @relation(fields: [userId], references: [id])
+  monto       Float
+  concepto    String
+  estado      PagoEstado @default(PENDIENTE)
+  // SEGURIDAD: nunca confiamos solo en el front, esperamos este ID del webhook
+  mpPaymentId String?    @unique
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@map("pagos")
+}
