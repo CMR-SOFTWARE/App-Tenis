@@ -33,15 +33,14 @@ export default auth((req) => {
   return NextResponse.next({ request: { headers: requestHeaders } })
 })
 
-// Extrae el primer segmento del hostname si hay 3+ partes (ej: juanperez.acepro.app → juanperez)
-// Ignora www y app para no confundirlos con tenants
+// Solo extrae subdominio si el host termina en .acepro.app
+// Así evitamos falsos positivos en Vercel (app-tenis.vercel.app), localhost, etc.
 function extractSubdomain(host: string): string | null {
   const hostname = host.split(":")[0]
-  const parts = hostname.split(".")
-  if (parts.length >= 3 && parts[0] !== "www" && parts[0] !== "app") {
-    return parts[0]
-  }
-  return null
+  if (!hostname.endsWith(".acepro.app")) return null
+  const subdomain = hostname.slice(0, -(".acepro.app".length))
+  if (!subdomain || subdomain === "www" || subdomain === "app") return null
+  return subdomain
 }
 
 export const config = {
