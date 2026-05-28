@@ -6,19 +6,25 @@
 //   - No suma JavaScript al bundle del browser
 //   - Más rápido: los datos se renderizan en el servidor
 
-import { auth } from "@/lib/auth"
+import { auth, signOut } from "@/lib/auth"
+import { db } from "@/lib/db"
 import { redirect } from "next/navigation"
-import { signOut } from "@/lib/auth"
 
 export default async function DashboardPage() {
-  // auth() nos da la sesión actual del usuario
-  // Como es Server Component, lo llamamos directamente sin hooks
   const session = await auth()
 
-  // Doble protección: si por alguna razón el middleware no actuó,
-  // redirigimos acá también. Siempre defender en múltiples capas.
-  if (!session) {
-    redirect("/login")
+  if (!session) redirect("/login")
+
+  // Leemos el usuario de la BD para tener datos frescos
+  // El JWT puede estar desactualizado (ej: recién completó el onboarding)
+  const user = await db.user.findUnique({
+    where: { id: session.user.id },
+    include: { tenant: true },
+  })
+
+  // Si no tiene academia todavía, lo mandamos al onboarding
+  if (!user?.tenantId && user?.rol !== "SUPER_ADMIN") {
+    redirect("/onboarding")
   }
 
   return (
@@ -38,7 +44,7 @@ export default async function DashboardPage() {
               className="w-8 h-8 rounded-full"
             />
           )}
-          <span className="text-sm text-gray-600">{session.user.email}</span>
+          <span className="text-sm text-gray-600">{user?.tenant?.nombre ?? session.user.email}</span>
 
           {/* Botón de logout — usa un form porque signOut es Server Action */}
           <form
@@ -60,10 +66,12 @@ export default async function DashboardPage() {
       {/* Contenido principal */}
       <main className="max-w-4xl mx-auto p-8">
         <h2 className="text-2xl font-semibold text-gray-800 mb-2">
-          Bienvenido, {session.user.name ?? session.user.email}
+          Bienvenido, {user?.nombre ?? user?.name ?? session.user.email}
         </h2>
         <p className="text-gray-500 mb-8">
-          Rol: <span className="font-medium text-gray-700">{session.user.rol}</span>
+          Academia: <span className="font-medium text-gray-700">{user?.tenant?.nombre}</span>
+          {" · "}
+          Rol: <span className="font-medium text-gray-700">{user?.rol}</span>
         </p>
 
         {/* Placeholder — acá van a ir las funcionalidades reales */}
