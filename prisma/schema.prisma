@@ -24,7 +24,8 @@ enum TenantTipo {
 
 enum UserRol {
   SUPER_ADMIN   // Lucas — acceso total a todo
-  TENANT_OWNER  // El profe — gestiona su propio tenant
+  TENANT_OWNER  // El profe dueño de la academia — gestiona su tenant
+  STAFF         // Profe que trabaja en una academia pero no es dueño
   STUDENT       // Alumno — reserva turnos
 }
 
@@ -77,8 +78,10 @@ model User {
   actualizadoEn DateTime      @updatedAt
 
   // Relaciones propias
-  reservas      Booking[]
-  pagos         Pago[]
+  reservas       Booking[]
+  pagos          Pago[]
+  // Slots que este profe tiene asignados (solo aplica a STAFF y TENANT_OWNER)
+  slotsAsignados ScheduleSlot[] @relation("SlotProfesor")
 
   // Relaciones de Auth.js — no las usamos directamente
   accounts      Account[]
@@ -148,9 +151,16 @@ model Tenant {
   creadoEn          DateTime     @default(now())
   actualizadoEn     DateTime     @updatedAt
 
+  // Datos de la landing page del profe
+  bio               String?      @db.Text  // descripción larga
+  fotoPerfil        String?               // URL en Supabase Storage
+  experienciaAnios  Int?                  // ej: 15
+  whatsapp          String?               // ej: "+5491112345678"
+
   usuarios          User[]
   turnos            ScheduleSlot[]
   pagos             Pago[]
+  clubes            TenantClub[]
 
   @@map("tenants")
 }
@@ -165,9 +175,42 @@ model ScheduleSlot {
   activo      Boolean   @default(true)
   creadoEn    DateTime  @default(now())
 
+  // null = lo cubre el TENANT_OWNER; con valor = slot asignado a un profe STAFF
+  profesorId  String?
+  profesor    User?     @relation("SlotProfesor", fields: [profesorId], references: [id])
+
   reservas    Booking[]
 
   @@map("schedule_slots")
+}
+
+// ============================================================
+// CLUBES — solo datos de referencia, NO son tenants
+// Un profe puede trabajar en varios clubes
+// ============================================================
+
+model Club {
+  id        String       @id @default(cuid())
+  nombre    String
+  direccion String?
+  ciudad    String?
+  creadoEn  DateTime     @default(now())
+
+  tenants   TenantClub[]
+
+  @@map("clubs")
+}
+
+// Tabla intermedia: un profe puede estar en muchos clubes
+// y un club puede tener muchos profes
+model TenantClub {
+  tenantId  String
+  clubId    String
+  tenant    Tenant @relation(fields: [tenantId], references: [id])
+  club      Club   @relation(fields: [clubId], references: [id])
+
+  @@id([tenantId, clubId])
+  @@map("tenant_clubs")
 }
 
 model Booking {
