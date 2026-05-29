@@ -18,7 +18,7 @@ export default auth((req) => {
 
   const isPublic =
     nextUrl.pathname === "/" ||
-    ["/login", "/api/auth", "/reservar"].some((p) => nextUrl.pathname.startsWith(p))
+    ["/login", "/api/auth", "/reservar", "/unirse"].some((p) => nextUrl.pathname.startsWith(p))
 
   // Extraer el subdominio del host e inyectarlo para que los Server Components lo lean
   const host = req.headers.get("host") ?? ""

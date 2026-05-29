@@ -15,9 +15,12 @@ async function getTenantId(): Promise<string | null> {
   return user?.tenantId ?? null
 }
 
-export async function bloquearSlot(diaSemana: number, horaInicio: string) {
+export async function bloquearSlot(
+  diaSemana: number,
+  horaInicio: string
+): Promise<{ error?: string }> {
   const tenantId = await getTenantId()
-  if (!tenantId) return
+  if (!tenantId) return { error: "No autenticado" }
 
   const existente = await db.scheduleSlot.findFirst({
     where: { tenantId, diaSemana, horaInicio },
@@ -30,9 +33,10 @@ export async function bloquearSlot(diaSemana: number, horaInicio: string) {
   }
 
   revalidatePath("/dashboard/turnos")
+  return {}
 }
 
-export async function desbloquearSlot(slotId: string) {
+export async function desbloquearSlot(slotId: string): Promise<void> {
   const tenantId = await getTenantId()
   if (!tenantId) return
 
@@ -43,9 +47,22 @@ export async function desbloquearSlot(slotId: string) {
   revalidatePath("/dashboard/turnos")
 }
 
-export async function asignarAlumno(diaSemana: number, horaInicio: string, studentId: string) {
+export async function asignarAlumno(
+  diaSemana: number,
+  horaInicio: string,
+  studentId: string
+): Promise<{ error?: string }> {
   const tenantId = await getTenantId()
-  if (!tenantId) return
+  if (!tenantId) return { error: "No autenticado" }
+
+  // Verificar que el alumno pertenece a este tenant
+  const alumno = await db.user.findUnique({
+    where: { id: studentId },
+    select: { tenantId: true, name: true },
+  })
+  if (!alumno || alumno.tenantId !== tenantId) {
+    return { error: "Este alumno no pertenece a tu academia" }
+  }
 
   // Buscar o crear el slot
   let slot = await db.scheduleSlot.findFirst({ where: { tenantId, diaSemana, horaInicio } })
@@ -53,16 +70,16 @@ export async function asignarAlumno(diaSemana: number, horaInicio: string, stude
   if (!slot) {
     slot = await db.scheduleSlot.create({ data: { tenantId, diaSemana, horaInicio, activo: true } })
   } else if (!slot.activo) {
-    return // No se puede asignar a un slot bloqueado
+    return { error: "Este horario está bloqueado. Desbloquealo primero." }
   }
 
-  // Cancelar asignaciones futuras previas para reasignar limpio
+  // Cancelar reservas futuras anteriores para reasignar limpio
   await db.booking.updateMany({
     where: { slotId: slot.id, fecha: { gte: new Date() }, estado: BookingEstado.CONFIRMADO },
     data: { estado: BookingEstado.CANCELADO },
   })
 
-  // Crear reservas para las próximas 12 semanas (3 meses)
+  // Crear reservas para las próximas 12 semanas
   const fechas: Date[] = []
   const cursor = new Date()
   cursor.setUTCHours(12, 0, 0, 0)
@@ -83,9 +100,10 @@ export async function asignarAlumno(diaSemana: number, horaInicio: string, stude
   })
 
   revalidatePath("/dashboard/turnos")
+  return {}
 }
 
-export async function cancelarAsignacionSlot(slotId: string) {
+export async function cancelarAsignacionSlot(slotId: string): Promise<void> {
   const tenantId = await getTenantId()
   if (!tenantId) return
 

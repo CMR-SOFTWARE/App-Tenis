@@ -2,7 +2,7 @@
 
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
-import { BookingEstado } from "@/generated/prisma/enums"
+import { BookingEstado, UserRol } from "@/generated/prisma/enums"
 import { revalidatePath } from "next/cache"
 
 type ActionState = { error?: string; success?: string } | null
@@ -44,6 +44,18 @@ export async function reservarTurno(
       estado: BookingEstado.CONFIRMADO,
     },
   })
+
+  // Si el alumno no tiene tenant todavía, asociarlo automáticamente
+  const currentUser = await db.user.findUnique({
+    where: { id: session.user.id },
+    select: { tenantId: true },
+  })
+  if (!currentUser?.tenantId) {
+    await db.user.update({
+      where: { id: session.user.id },
+      data: { tenantId: slot.tenantId, rol: UserRol.STUDENT },
+    })
+  }
 
   revalidatePath(`/reservar/${slotId}`)
   return { success: "¡Turno reservado! Te esperamos." }

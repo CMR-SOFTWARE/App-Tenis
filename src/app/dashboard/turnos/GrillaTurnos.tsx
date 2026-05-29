@@ -23,10 +23,9 @@ type Props = {
 
 export default function GrillaTurnos({ gridData, students }: Props) {
   const router = useRouter()
-  // useTransition permite correr código async sin bloquear la UI
-  // isPending es true mientras el server action se ejecuta
   const [isPending, startTransition] = useTransition()
   const [selected, setSelected] = useState<{ dia: number; hora: string } | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   function getInfo(dia: number, hora: string) {
     return gridData[`${dia}-${hora}`] ?? null
@@ -40,24 +39,33 @@ export default function GrillaTurnos({ gridData, students }: Props) {
     return "libre"
   }
 
-  // Llama al Server Action y después refresca los datos del Server Component
-  function doAction(fn: () => Promise<unknown>) {
+  function doAction(fn: () => Promise<{ error?: string } | void>) {
+    setActionError(null)
     startTransition(async () => {
-      await fn()
+      const result = await fn()
+      if (result && "error" in result && result.error) {
+        setActionError(result.error)
+        return
+      }
       router.refresh()
-      setSelected(null)
+      cerrar()
     })
+  }
+
+  function cerrar() {
+    setSelected(null)
+    setActionError(null)
   }
 
   const selInfo = selected ? getInfo(selected.dia, selected.hora) : null
   const selEstado = selected ? getEstado(selected.dia, selected.hora) : null
 
   return (
-    <div>
+    <>
       {/* Leyenda */}
-      <div className="flex items-center gap-5 mb-5 text-xs text-gray-500">
+      <div className="flex items-center gap-4 mb-4 text-xs text-gray-500">
         <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded border border-gray-300 bg-white inline-block" />
+          <span className="w-3 h-3 rounded bg-white border border-gray-300 inline-block" />
           Libre
         </span>
         <span className="flex items-center gap-1.5">
@@ -70,14 +78,14 @@ export default function GrillaTurnos({ gridData, students }: Props) {
         </span>
       </div>
 
-      {/* Grilla */}
-      <div className="overflow-x-auto">
-        <table className="border-separate border-spacing-1 min-w-[400px]" style={{ width: "100%" }}>
+      {/* Grilla con scroll horizontal en mobile */}
+      <div className="overflow-x-auto -mx-1">
+        <table className="border-separate border-spacing-1" style={{ minWidth: "320px", width: "100%" }}>
           <thead>
             <tr>
-              <th className="w-12" />
+              <th className="w-10" />
               {DIAS.map((d) => (
-                <th key={d} className="text-xs font-semibold text-gray-500 pb-2 text-center">
+                <th key={d} className="text-xs font-semibold text-gray-500 pb-2 text-center" style={{ minWidth: "44px" }}>
                   {d}
                 </th>
               ))}
@@ -86,7 +94,7 @@ export default function GrillaTurnos({ gridData, students }: Props) {
           <tbody>
             {HORAS.map((hora) => (
               <tr key={hora}>
-                <td className="text-xs text-gray-400 text-right pr-2 align-middle select-none w-12">
+                <td className="text-xs text-gray-400 text-right pr-2 align-middle select-none w-10">
                   {hora}
                 </td>
                 {DIA_NUMS.map((dia) => {
@@ -96,25 +104,19 @@ export default function GrillaTurnos({ gridData, students }: Props) {
                   return (
                     <td key={dia} className="p-0">
                       <button
-                        onClick={() =>
+                        onClick={() => {
+                          setActionError(null)
                           setSelected(isSel ? null : { dia, hora })
-                        }
+                        }}
                         disabled={isPending}
-                        title={
-                          estado === "bloqueado"
-                            ? "Bloqueado"
-                            : estado === "asignado"
-                            ? getInfo(dia, hora)?.alumno?.name ?? "Asignado"
-                            : "Libre — click para opciones"
-                        }
                         className={[
-                          "w-full h-9 rounded-lg text-xs font-medium transition-all border",
+                          "w-full h-11 rounded-lg text-xs font-medium transition-colors border touch-manipulation",
                           isSel ? "ring-2 ring-green-600 ring-offset-1" : "",
                           estado === "libre"
-                            ? "bg-white border-gray-200 text-transparent hover:bg-green-50 hover:border-green-300"
+                            ? "bg-white border-gray-200 text-transparent active:bg-green-50"
                             : estado === "bloqueado"
-                            ? "bg-gray-100 border-gray-200 text-gray-400 cursor-pointer"
-                            : "bg-green-100 border-green-200 text-green-800 truncate px-1",
+                            ? "bg-gray-100 border-gray-200 text-gray-500"
+                            : "bg-green-100 border-green-200 text-green-800 overflow-hidden px-0.5",
                         ].join(" ")}
                       >
                         {estado === "bloqueado" && "—"}
@@ -130,42 +132,75 @@ export default function GrillaTurnos({ gridData, students }: Props) {
         </table>
       </div>
 
-      {/* Panel de acción — aparece al seleccionar una celda */}
-      {selected && (
-        <div className="mt-6 p-5 rounded-2xl border border-gray-200 bg-gray-50">
-          <div className="flex items-center justify-between mb-4">
-            <p className="font-semibold text-gray-800">
-              {DIAS[DIA_NUMS.indexOf(selected.dia)]} — {selected.hora}
-            </p>
-            <button
-              onClick={() => setSelected(null)}
-              className="text-gray-400 hover:text-gray-600 text-xl leading-none"
-            >
-              ×
-            </button>
-          </div>
+      {/* Overlay oscuro — cierra el sheet al tocar */}
+      <div
+        className={`fixed inset-0 bg-black/50 z-40 transition-opacity duration-300 ${
+          selected ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+        }`}
+        onClick={cerrar}
+      />
 
-          {/* Celda libre */}
+      {/* Bottom sheet — se desliza desde abajo */}
+      <div
+        className={`fixed bottom-0 left-0 right-0 z-50 bg-white rounded-t-3xl shadow-2xl
+          transition-transform duration-300 ease-out
+          ${selected ? "translate-y-0" : "translate-y-full"}`}
+      >
+        {/* Handle visual (estilo iOS) */}
+        <div className="flex justify-center pt-3 pb-1">
+          <div className="w-10 h-1 bg-gray-300 rounded-full" />
+        </div>
+
+        {/* Header del sheet */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <p className="font-bold text-gray-900 text-lg">
+            {selected
+              ? `${DIAS[DIA_NUMS.indexOf(selected.dia)]} — ${selected.hora}`
+              : ""}
+          </p>
+          <button
+            onClick={cerrar}
+            className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 text-xl font-medium active:bg-gray-200"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Contenido scrolleable */}
+        <div className="px-6 py-5 overflow-y-auto space-y-3" style={{ maxHeight: "60vh" }}>
+
+          {/* Mensaje de error */}
+          {actionError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-2xl">
+              {actionError}
+            </div>
+          )}
+
+          {/* Celda libre → bloquear o asignar */}
           {selEstado === "libre" && (
-            <div className="space-y-3">
+            <>
               <button
-                onClick={() => doAction(() => bloquearSlot(selected.dia, selected.hora))}
+                onClick={() => doAction(() => bloquearSlot(selected!.dia, selected!.hora))}
                 disabled={isPending}
-                className="w-full border border-gray-300 text-gray-600 py-2.5 rounded-xl text-sm hover:bg-gray-100 transition-colors disabled:opacity-50"
+                className="w-full border border-gray-300 text-gray-700 py-4 rounded-2xl text-sm font-semibold active:bg-gray-50 transition-colors disabled:opacity-50"
               >
-                Bloquear este horario
+                🔒 Bloquear este horario
               </button>
 
               {students.length > 0 ? (
                 <div>
-                  <p className="text-xs text-gray-500 mb-2 font-medium">Asignar alumno:</p>
-                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+                    Asignar alumno
+                  </p>
+                  <div className="space-y-2">
                     {students.map((s) => (
                       <button
                         key={s.id}
-                        onClick={() => doAction(() => asignarAlumno(selected.dia, selected.hora, s.id))}
+                        onClick={() =>
+                          doAction(() => asignarAlumno(selected!.dia, selected!.hora, s.id))
+                        }
                         disabled={isPending}
-                        className="w-full bg-green-700 text-white py-2.5 rounded-xl text-sm font-medium hover:bg-green-800 transition-colors disabled:opacity-50 text-left px-4"
+                        className="w-full bg-green-700 text-white py-4 rounded-2xl text-sm font-semibold active:bg-green-900 transition-colors disabled:opacity-50 text-left px-5"
                       >
                         {s.name ?? s.email}
                       </button>
@@ -173,37 +208,43 @@ export default function GrillaTurnos({ gridData, students }: Props) {
                   </div>
                 </div>
               ) : (
-                <p className="text-sm text-gray-400 text-center py-1">
-                  Todavía no tenés alumnos registrados
-                </p>
+                <div className="bg-gray-50 rounded-2xl p-5 text-center">
+                  <p className="text-sm font-semibold text-gray-600">
+                    No tenés alumnos registrados
+                  </p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Compartí el link de invitación para que se unan
+                  </p>
+                </div>
               )}
-            </div>
+            </>
           )}
 
-          {/* Celda bloqueada */}
+          {/* Celda bloqueada → desbloquear */}
           {selEstado === "bloqueado" && (
             <button
               onClick={() => doAction(() => desbloquearSlot(selInfo!.slotId))}
               disabled={isPending}
-              className="w-full bg-gray-800 text-white py-2.5 rounded-xl text-sm font-medium hover:bg-gray-900 transition-colors disabled:opacity-50"
+              className="w-full bg-gray-800 text-white py-4 rounded-2xl text-sm font-semibold active:bg-black transition-colors disabled:opacity-50"
             >
-              Desbloquear
+              Desbloquear horario
             </button>
           )}
 
-          {/* Celda asignada */}
+          {/* Celda asignada → ver alumno o cancelar */}
           {selEstado === "asignado" && (
             <div className="space-y-3">
-              <p className="text-sm text-gray-600">
-                Asignado a:{" "}
-                <span className="font-semibold text-gray-900">
+              <div className="bg-green-50 rounded-2xl p-4">
+                <p className="text-xs font-semibold text-green-600 mb-1">Asignado a</p>
+                <p className="text-lg font-black text-green-900">
                   {selInfo?.alumno?.name ?? selInfo?.alumno?.email}
-                </span>
-              </p>
+                </p>
+                <p className="text-xs text-green-600">{selInfo?.alumno?.email}</p>
+              </div>
               <button
                 onClick={() => doAction(() => cancelarAsignacionSlot(selInfo!.slotId))}
                 disabled={isPending}
-                className="w-full border border-red-200 text-red-500 py-2.5 rounded-xl text-sm hover:bg-red-50 transition-colors disabled:opacity-50"
+                className="w-full border border-red-200 text-red-500 py-4 rounded-2xl text-sm font-semibold active:bg-red-50 transition-colors disabled:opacity-50"
               >
                 Cancelar asignación
               </button>
@@ -211,10 +252,13 @@ export default function GrillaTurnos({ gridData, students }: Props) {
           )}
 
           {isPending && (
-            <p className="text-xs text-gray-400 text-center mt-3">Guardando...</p>
+            <p className="text-sm text-center text-gray-400 py-2">Guardando...</p>
           )}
+
+          {/* Espacio extra en la parte inferior para el safe area de iOS */}
+          <div className="h-6" />
         </div>
-      )}
-    </div>
+      </div>
+    </>
   )
 }
