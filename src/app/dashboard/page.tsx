@@ -82,7 +82,10 @@ export default async function DashboardPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white rounded-xl border border-gray-200 p-6">
             <h3 className="font-semibold text-gray-700 mb-1">Mis turnos</h3>
-            <p className="text-gray-400 text-sm">Próximamente</p>
+             <p className="text-gray-400 text-sm mb-3">Gestioná tus horarios</p>
+              <a href="/dashboard/turnos" className="text-sm text-green-700 font-medium hover:underline">
+                Ver turnos →
+              </a>
           </div>
           <div className="bg-white rounded-xl border border-gray-200 p-6">
             <h3 className="font-semibold text-gray-700 mb-1">Alumnos</h3>
