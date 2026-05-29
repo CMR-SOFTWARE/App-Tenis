@@ -1,13 +1,14 @@
 "use client"
-// ↑ "use client" le dice a Next.js que este componente corre en el BROWSER
-// Lo necesitamos porque tiene un botón con onClick (interactividad)
-// Sin esto, Next.js lo trataría como Server Component y el onClick no funcionaría
 
 import { signIn } from "next-auth/react"
-// ↑ Importamos signIn desde "next-auth/react" (versión para el cliente)
-// Existe también signIn desde "@/lib/auth" pero esa es para el servidor
+import { useSearchParams } from "next/navigation"
 
 export default function LoginPage() {
+  // Leemos el callbackUrl de la URL para redirigir al lugar correcto después del login
+  // Ejemplo: /login?callbackUrl=/unirse/lucascalderon → vuelve a /unirse/lucascalderon
+  const searchParams = useSearchParams()
+  const callbackUrl = searchParams.get("callbackUrl") ?? "/dashboard"
+
   return (
     // Contenedor que centra todo en la pantalla
     // h-screen = height 100vh | flex + items/justify-center = centrado
@@ -23,7 +24,7 @@ export default function LoginPage() {
         {/* Botón de Google */}
         {/* onClick llama a signIn("google") que redirige al flujo de OAuth de Google */}
         <button
-          onClick={() => signIn("google", { callbackUrl: "/dashboard" })}
+          onClick={() => signIn("google", { callbackUrl })}
           className="w-full flex items-center justify-center gap-3 border border-gray-300 rounded-lg px-4 py-3 text-gray-700 font-medium hover:bg-gray-50 transition-colors"
         >
           {/* Logo de Google en SVG para no depender de ninguna librería */}
