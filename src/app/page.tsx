@@ -28,6 +28,14 @@ export default async function LandingPage({
     if (!tenant) notFound()
   }
 
+  // Traer los slots activos del tenant para mostrarlos en la landing
+  const slots = tenant
+    ? await db.scheduleSlot.findMany({
+        where: { tenantId: tenant.id, activo: true },
+        orderBy: [{ diaSemana: "asc" }, { horaInicio: "asc" }],
+      })
+    : []
+
   // Datos reales si hay tenant, placeholders si no
   const nombre = tenant?.nombre ?? "Juan Pérez"
   const bio =
@@ -45,6 +53,8 @@ export default async function LandingPage({
     .toUpperCase()
 
   const subtitulo = `Coach certificado · ${experienciaAnios} años de experiencia`
+
+  const DIAS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
   const stats = [
     { valor: "200+", etiqueta: "Alumnos formados" },
@@ -361,6 +371,44 @@ export default async function LandingPage({
           </div>
         </div>
       </section>
+
+      {/* ── TURNOS DISPONIBLES ── */}
+      {slots.length > 0 && (
+        <section id="turnos" className="py-24 px-6">
+          <div className="max-w-6xl mx-auto">
+            <div className="text-center mb-16">
+              <span className="text-green-700 font-semibold text-sm uppercase tracking-wider">
+                Horarios
+              </span>
+              <h2 className="text-4xl font-black text-gray-900 mt-2">Reservá tu turno</h2>
+              <p className="text-gray-400 mt-4">
+                Elegí el día y horario que más te convenga
+              </p>
+            </div>
+
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {slots.map((slot) => (
+                <div
+                  key={slot.id}
+                  className="bg-white rounded-2xl border border-gray-100 p-6 hover:shadow-lg transition-shadow"
+                >
+                  <div className="text-green-700 font-semibold text-sm mb-2">
+                    {DIAS[slot.diaSemana]}
+                  </div>
+                  <div className="text-3xl font-black text-gray-900">{slot.horaInicio}</div>
+                  <div className="text-gray-400 text-sm mt-1">{slot.duracionMin} minutos</div>
+                  <a
+                    href={`/reservar/${slot.id}`}
+                    className="mt-5 block text-center bg-green-700 text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-green-800 transition-colors"
+                  >
+                    Reservar →
+                  </a>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* ── CTA FINAL ── */}
       <section className="py-28 px-6 bg-gradient-to-br from-green-900 via-green-800 to-emerald-950 relative overflow-hidden">
