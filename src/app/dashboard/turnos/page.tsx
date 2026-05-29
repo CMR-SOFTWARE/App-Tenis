@@ -50,7 +50,7 @@ export default async function TurnosPage() {
     select: { id: true, name: true, email: true },
   })
 
-  const appUrl = process.env.NEXTAUTH_URL ?? "https://app-tenis.vercel.app"
+  const appUrl = process.env.NEXTAUTH_URL ?? "https://app-tenis-rho.vercel.app"
   const inviteLink = `${appUrl}/unirse/${user.tenant?.subdominio}`
 
   return (
