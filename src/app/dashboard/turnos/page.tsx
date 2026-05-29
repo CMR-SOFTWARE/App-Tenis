@@ -1,10 +1,14 @@
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { redirect } from "next/navigation"
-import NuevoSlotForm from "./NuevoSlotForm"
-import { eliminarSlot } from "./actions"
+import { BookingEstado, UserRol } from "@/generated/prisma/enums"
+import GrillaTurnos from "./GrillaTurnos"
 
-const DIAS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+type CeldaInfo = {
+  slotId: string
+  activo: boolean
+  alumno: { id: string; name: string | null; email: string } | null
+}
 
 export default async function TurnosPage() {
   const session = await auth()
@@ -16,18 +20,37 @@ export default async function TurnosPage() {
   })
   if (!user?.tenantId) redirect("/onboarding")
 
-  // Traemos solo los slots activos, ordenados por día y hora
+  const hoy = new Date()
+
+  // Traemos todos los slots del tenant con su próxima reserva confirmada
   const slots = await db.scheduleSlot.findMany({
-    where: { tenantId: user.tenantId, activo: true },
-    orderBy: [{ diaSemana: "asc" }, { horaInicio: "asc" }],
+    where: { tenantId: user.tenantId },
+    include: {
+      reservas: {
+        where: { fecha: { gte: hoy }, estado: BookingEstado.CONFIRMADO },
+        orderBy: { fecha: "asc" },
+        take: 1,
+        include: { student: { select: { id: true, name: true, email: true } } },
+      },
+    },
   })
 
-  // Agrupamos los slots por día para mostrarlos en secciones
-  // Esto es como un Dictionary<int, List<Slot>> en C#
-  const slotsPorDia = DIAS.map((nombre, index) => ({
-    nombre,
-    slots: slots.filter((s) => s.diaSemana === index),
-  })).filter((dia) => dia.slots.length > 0)
+  // Construimos el mapa de la grilla: "diaSemana-horaInicio" → datos de la celda
+  const gridData: Record<string, CeldaInfo> = {}
+  for (const slot of slots) {
+    const key = `${slot.diaSemana}-${slot.horaInicio}`
+    gridData[key] = {
+      slotId: slot.id,
+      activo: slot.activo,
+      alumno: slot.reservas[0]?.student ?? null,
+    }
+  }
+
+  // Alumnos registrados bajo este tenant
+  const students = await db.user.findMany({
+    where: { tenantId: user.tenantId, rol: UserRol.STUDENT },
+    select: { id: true, name: true, email: true },
+  })
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -35,54 +58,16 @@ export default async function TurnosPage() {
         <a href="/dashboard" className="text-sm text-gray-500 hover:text-gray-700">
           ← Dashboard
         </a>
-        <h1 className="text-lg font-bold text-gray-900">Mis turnos</h1>
+        <h1 className="text-lg font-bold text-gray-900">Gestión de turnos</h1>
       </nav>
 
-      <main className="max-w-3xl mx-auto p-8 space-y-8">
-
-        {/* Formulario para agregar un slot nuevo */}
+      <main className="max-w-3xl mx-auto p-6">
+        <p className="text-sm text-gray-400 mb-6">
+          Hacé click en cualquier celda para bloquear un horario o asignar un alumno.
+        </p>
         <div className="bg-white rounded-2xl border border-gray-200 p-6">
-          <h2 className="font-semibold text-gray-800 mb-4">Agregar horario</h2>
-          <NuevoSlotForm />
+          <GrillaTurnos gridData={gridData} students={students} />
         </div>
-
-        {/* Lista de slots agrupados por día */}
-        {slotsPorDia.length === 0 ? (
-          <p className="text-center text-gray-400 py-12">
-            Todavía no tenés horarios cargados. ¡Agregá el primero arriba!
-          </p>
-        ) : (
-          <div className="space-y-4">
-            {slotsPorDia.map((dia) => (
-              <div key={dia.nombre} className="bg-white rounded-2xl border border-gray-200 p-6">
-                <h3 className="font-semibold text-gray-700 mb-3">{dia.nombre}</h3>
-                <div className="space-y-2">
-                  {dia.slots.map((slot) => (
-                    <div
-                      key={slot.id}
-                      className="flex items-center justify-between py-2 px-3 rounded-xl bg-gray-50"
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="text-gray-900 font-medium">{slot.horaInicio}</span>
-                        <span className="text-gray-400 text-sm">{slot.duracionMin} min</span>
-                      </div>
-
-                      {/* Botón de eliminar — usa .bind() para pasarle el ID al Server Action */}
-                      <form action={eliminarSlot.bind(null, slot.id)}>
-                        <button
-                          type="submit"
-                          className="text-xs text-red-400 hover:text-red-600 transition-colors"
-                        >
-                          Eliminar
-                        </button>
-                      </form>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </main>
     </div>
   )
