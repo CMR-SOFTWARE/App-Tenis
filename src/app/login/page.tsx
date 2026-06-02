@@ -1,57 +1,150 @@
 "use client"
 
+import { useState } from "react"
 import { signIn } from "next-auth/react"
-import { useSearchParams } from "next/navigation"
+import { useSearchParams, useRouter } from "next/navigation"
+
+const DEMO_USERS = [
+  { label: "Profesor", desc: "Agenda, alumnos y pagos", email: "demo.profesor@cancha.app", password: "demo1234" },
+  { label: "Jugador", desc: "Turnos, historial y pagos", email: "demo.jugador@cancha.app", password: "demo1234" },
+  { label: "Club", desc: "Panel del club", email: "demo.club@cancha.app", password: "demo1234" },
+]
 
 export default function LoginPage() {
-  // Leemos el callbackUrl de la URL para redirigir al lugar correcto después del login
-  // Ejemplo: /login?callbackUrl=/unirse/lucascalderon → vuelve a /unirse/lucascalderon
   const searchParams = useSearchParams()
   const callbackUrl = searchParams.get("callbackUrl") ?? "/dashboard"
+  const router = useRouter()
+
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setIsLoading(true)
+    const result = await signIn("credentials", { email, password, redirect: false })
+    setIsLoading(false)
+    if (result?.error) {
+      setError("Email o contraseña incorrectos")
+      return
+    }
+    router.push(callbackUrl)
+  }
+
+  async function handleDemo(demoEmail: string, demoPassword: string) {
+    setError(null)
+    setIsLoading(true)
+    const result = await signIn("credentials", { email: demoEmail, password: demoPassword, redirect: false })
+    setIsLoading(false)
+    if (result?.error) {
+      setError("Los usuarios demo no están disponibles todavía.")
+      return
+    }
+    router.push("/dashboard")
+  }
 
   return (
-    // Contenedor que centra todo en la pantalla
-    // h-screen = height 100vh | flex + items/justify-center = centrado
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-12">
+      <div className="bg-white rounded-2xl shadow-md w-full max-w-sm p-8">
 
-      {/* Tarjeta del formulario */}
-      <div className="bg-white p-8 rounded-xl shadow-md w-full max-w-sm text-center">
+        {/* Logo */}
+        <div className="text-center mb-7">
+          <div className="text-3xl mb-1">🎾</div>
+          <h1 className="text-2xl font-black text-gray-900">Cancha</h1>
+          <p className="text-sm text-gray-400 mt-1">Plataforma deportiva integral</p>
+        </div>
 
-        {/* Logo / título */}
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">AcePro</h1>
-        <p className="text-gray-500 mb-8">Gestión de tenis profesional</p>
+        {/* Formulario principal */}
+        <form onSubmit={handleLogin} className="space-y-4 mb-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoComplete="email"
+              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-green-600"
+              placeholder="juan@ejemplo.com"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              autoComplete="current-password"
+              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-green-600"
+              placeholder="Tu contraseña"
+            />
+          </div>
 
-        {/* Botón de Google */}
-        {/* onClick llama a signIn("google") que redirige al flujo de OAuth de Google */}
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-xl">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full bg-green-700 text-white py-3 rounded-xl font-bold hover:bg-green-800 transition-colors disabled:opacity-60"
+          >
+            {isLoading ? "Ingresando..." : "Ingresar"}
+          </button>
+        </form>
+
+        {/* Google (secundario) */}
         <button
           onClick={() => signIn("google", { callbackUrl })}
-          className="w-full flex items-center justify-center gap-3 border border-gray-300 rounded-lg px-4 py-3 text-gray-700 font-medium hover:bg-gray-50 transition-colors"
+          disabled={isLoading}
+          className="w-full flex items-center justify-center gap-3 border border-gray-200 rounded-xl px-4 py-2.5 text-gray-600 text-sm font-medium hover:bg-gray-50 transition-colors mb-6 disabled:opacity-60"
         >
-          {/* Logo de Google en SVG para no depender de ninguna librería */}
-          <svg className="w-5 h-5" viewBox="0 0 24 24">
-            <path
-              fill="#4285F4"
-              d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-            />
-            <path
-              fill="#34A853"
-              d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-            />
-            <path
-              fill="#FBBC05"
-              d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"
-            />
-            <path
-              fill="#EA4335"
-              d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-            />
+          <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24">
+            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" />
+            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
           </svg>
           Continuar con Google
         </button>
 
-        <p className="text-xs text-gray-400 mt-6">
-          Al continuar aceptás los términos de uso de AcePro
-        </p>
+        {/* Modo demo */}
+        <div className="border border-gray-100 rounded-xl p-4 mb-5">
+          <p className="text-xs font-semibold text-gray-500 mb-3">Modo demo (sin base de datos real)</p>
+          <div className="space-y-2">
+            {DEMO_USERS.map((u) => (
+              <button
+                key={u.email}
+                onClick={() => handleDemo(u.email, u.password)}
+                disabled={isLoading}
+                className="w-full flex items-center justify-between bg-gray-50 hover:bg-gray-100 rounded-xl px-4 py-3 text-left transition-colors disabled:opacity-60"
+              >
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">{u.label}</p>
+                  <p className="text-xs text-gray-400">{u.desc}</p>
+                </div>
+                <span className="text-gray-400 text-sm">→</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Links finales */}
+        <div className="text-center space-y-2">
+          <p className="text-xs text-gray-400">
+            ¿No tenés cuenta?{" "}
+            <a href="/" className="text-green-700 font-medium hover:underline">
+              Registrate
+            </a>
+          </p>
+          <p className="text-xs text-gray-300 cursor-default">Olvidé mi contraseña</p>
+        </div>
+
       </div>
     </div>
   )

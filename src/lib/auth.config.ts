@@ -8,7 +8,7 @@
 
 import type { NextAuthConfig } from "next-auth"
 import Google from "next-auth/providers/google"
-import type { UserRol } from "@/generated/prisma/enums"
+import type { NivelJugador, UserRol } from "@/generated/prisma/enums"
 
 export const authConfig: NextAuthConfig = {
   providers: [
@@ -31,9 +31,11 @@ export const authConfig: NextAuthConfig = {
     // Cuando el usuario se loguea, guardamos sus datos custom en el token
     jwt({ token, user }) {
       if (user) {
+        const u = user as unknown as { rol: UserRol; tenantId: string | null; nivelJugador: NivelJugador | null }
         token.id = user.id
-        token.rol = (user as unknown as { rol: UserRol }).rol
-        token.tenantId = (user as unknown as { tenantId: string | null }).tenantId
+        token.rol = u.rol
+        token.tenantId = u.tenantId
+        token.nivelJugador = u.nivelJugador
       }
       return token
     },
@@ -43,6 +45,7 @@ export const authConfig: NextAuthConfig = {
       session.user.id = token.id as string
       session.user.rol = token.rol as UserRol
       session.user.tenantId = token.tenantId as string | null
+      session.user.nivelJugador = (token.nivelJugador as NivelJugador | null) ?? null
       return session
     },
 

@@ -7,12 +7,30 @@ import NextAuth from "next-auth"
 import { PrismaAdapter } from "@auth/prisma-adapter"
 import { db } from "@/lib/db"
 import { authConfig } from "@/lib/auth.config"
+import Credentials from "next-auth/providers/credentials"
+import bcrypt from "bcryptjs"
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  // Extendemos la config liviana con el adapter de Prisma
   ...authConfig,
 
-  // El adapter conecta Auth.js con nuestra BD:
-  // crea el usuario en la tabla 'users' la primera vez que se loguea
+  providers: [
+    ...authConfig.providers,
+    Credentials({
+      credentials: {
+        email: { label: "Email" },
+        password: { label: "Contraseña", type: "password" },
+      },
+      async authorize(credentials) {
+        if (!credentials?.email || !credentials?.password) return null
+        const user = await db.user.findUnique({
+          where: { email: credentials.email as string },
+        })
+        if (!user?.password) return null
+        const ok = await bcrypt.compare(credentials.password as string, user.password)
+        return ok ? user : null
+      },
+    }),
+  ],
+
   adapter: PrismaAdapter(db),
 })

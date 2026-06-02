@@ -36,14 +36,17 @@ export default async function LandingPage({
       })
     : []
 
-  // Datos reales si hay tenant, placeholders si no
-  const nombre = tenant?.nombre ?? "Juan Pérez"
-  const bio =
-    tenant?.bio ??
-    "Soy profesor de tenis con más de 15 años de experiencia formando jugadores de todos los niveles. Trabajo con niños, adultos y jugadores competitivos, con un enfoque en la técnica, la táctica y el disfrute del juego."
-  const experienciaAnios = tenant?.experienciaAnios ?? 15
-  const whatsapp = tenant?.whatsapp ?? null
-  const fotoPerfil = tenant?.fotoPerfil ?? null
+  // Sin subdominio → landing central de AcePro
+  if (!subdominio) {
+    return <LandingCentral />
+  }
+
+  // Datos del tenant (profesor o club)
+  const nombre = tenant!.nombre
+  const bio = tenant!.bio ?? ""
+  const experienciaAnios = tenant!.experienciaAnios ?? 0
+  const whatsapp = tenant!.whatsapp ?? null
+  const fotoPerfil = tenant!.fotoPerfil ?? null
 
   const iniciales = nombre
     .split(" ")
@@ -52,13 +55,15 @@ export default async function LandingPage({
     .join("")
     .toUpperCase()
 
-  const subtitulo = `Coach certificado · ${experienciaAnios} años de experiencia`
+  const subtitulo = experienciaAnios
+    ? `Coach certificado · ${experienciaAnios} años de experiencia`
+    : "Coach certificado"
 
   const DIAS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
   const stats = [
     { valor: "200+", etiqueta: "Alumnos formados" },
-    { valor: String(experienciaAnios), etiqueta: "Años de experiencia" },
+    { valor: experienciaAnios ? String(experienciaAnios) : "—", etiqueta: "Años de experiencia" },
     { valor: "3", etiqueta: "Clubes asociados" },
     { valor: "AAT", etiqueta: "Certificación" },
   ]
@@ -456,9 +461,124 @@ export default async function LandingPage({
 
           <div className="text-xs text-gray-700">
             Powered by{" "}
-            <span className="text-gray-500 font-medium">AcePro</span>
+            <span className="text-gray-500 font-medium">Cancha</span>
           </div>
         </div>
+      </footer>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────
+// LANDING CENTRAL — cancha.app sin subdominio
+// ─────────────────────────────────────────────────────────────
+function LandingCentral() {
+  return (
+    <div className="min-h-screen bg-gray-50">
+
+      {/* Navbar */}
+      <nav className="bg-white border-b border-gray-200">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">🎾</span>
+            <span className="font-bold text-gray-900 text-lg">Cancha</span>
+          </div>
+          <div className="hidden md:flex items-center gap-6">
+            <Link href="/profesores" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
+              Profesores
+            </Link>
+            <Link href="/ranking" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
+              Ranking
+            </Link>
+            <Link href="/marketplace" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
+              Marketplace
+            </Link>
+            <Link href="/?subdominio=demo" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
+              Profesor demo
+            </Link>
+          </div>
+          <div className="flex items-center gap-3">
+            <Link href="/login" className="text-sm text-gray-600 font-medium hover:text-gray-900 transition-colors">
+              Ingresar
+            </Link>
+            <Link
+              href="/registro/profesor"
+              className="text-sm bg-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-800 transition-colors"
+            >
+              Registrarse
+            </Link>
+          </div>
+        </div>
+      </nav>
+
+      {/* Hero */}
+      <section className="py-24 px-6 text-center">
+        <div className="max-w-3xl mx-auto">
+          <div className="text-5xl mb-6">🎾</div>
+          <h1 className="text-5xl md:text-6xl font-black text-gray-900 mb-5 leading-tight">
+            Tu deporte, en una sola plataforma
+          </h1>
+          <p className="text-lg text-gray-500 mb-10 max-w-xl mx-auto leading-relaxed">
+            Reservá clases con profesores, gestioná tu club, seguí el ranking local y comprá en el marketplace.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <Link
+              href="/registro/profesor"
+              className="bg-green-700 text-white px-7 py-3.5 rounded-xl font-semibold hover:bg-green-800 transition-colors"
+            >
+              Empezar gratis
+            </Link>
+            <Link
+              href="/ranking"
+              className="border border-gray-300 text-gray-700 px-7 py-3.5 rounded-xl font-semibold hover:bg-gray-50 transition-colors"
+            >
+              Ver ranking
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Feature cards */}
+      <section className="pb-20 px-6">
+        <div className="max-w-5xl mx-auto grid md:grid-cols-3 gap-6">
+          <div className="bg-white rounded-2xl border border-gray-100 p-8 shadow-sm">
+            <h3 className="font-bold text-gray-900 text-lg mb-2">Profesores</h3>
+            <p className="text-gray-500 text-sm mb-5 leading-relaxed">
+              Publicá tu agenda, gestioná alumnos y cobrá clases o mensualidades con Mercado Pago.
+            </p>
+            <Link href="/registro/profesor" className="text-sm text-green-700 font-medium hover:underline">
+              Soy profesor →
+            </Link>
+          </div>
+          <div className="bg-white rounded-2xl border border-gray-100 p-8 shadow-sm">
+            <h3 className="font-bold text-gray-900 text-lg mb-2">Jugadores</h3>
+            <p className="text-gray-500 text-sm mb-5 leading-relaxed">
+              Reservá turnos, cancelá con anticipación y recibí recordatorios por WhatsApp.
+            </p>
+            <div className="flex flex-col gap-2">
+              <Link href="/profesores" className="text-sm text-green-700 font-medium hover:underline">
+                Buscar un profesor →
+              </Link>
+              <Link href="/registro/alumno" className="text-sm text-gray-500 hover:underline">
+                Registrarme como jugador →
+              </Link>
+            </div>
+          </div>
+          <div className="bg-white rounded-2xl border border-gray-100 p-8 shadow-sm">
+            <h3 className="font-bold text-gray-900 text-lg mb-2">Clubes</h3>
+            <p className="text-gray-500 text-sm mb-5 leading-relaxed">
+              Administrá canchas, socios y múltiples profesores desde un panel unificado.
+            </p>
+            <Link href="/registro/club" className="text-sm text-green-700 font-medium hover:underline">
+              Soy club →
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="bg-white border-t border-gray-100 py-8 px-6 text-center">
+        <p className="text-sm text-gray-400">© 2026 Cancha · Plataforma integral de deportes</p>
       </footer>
     </div>
   )

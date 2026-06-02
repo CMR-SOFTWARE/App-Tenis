@@ -36,7 +36,38 @@ enum AlumnoEstado {
   INACTIVO   // Dado de baja por el profe
 }
 
+enum NivelJugador {
+  SEPTIMA   // 7ma — nivel más bajo / default
+  SEXTA     // 6ta
+  QUINTA    // 5ta
+  CUARTA    // 4ta
+  TERCERA   // 3ra
+  SEGUNDA   // 2da
+  PRIMERA   // 1ra — nivel más alto
+}
+
+enum TipoClase {
+  INDIVIDUAL          // 1 alumno — paga precio/hora completo
+  PARTICULAR_CERRADA  // 2-4 alumnos — precio/hora dividido entre todos
+  GRUPAL              // hasta 5 alumnos — precio mensual fijo configurable
+}
+
+enum TipoDocumento {
+  DNI
+  PASAPORTE
+  CUIL
+  CUIT
+  LC
+  LE
+}
+
+enum ModalidadClase {
+  PARTICULAR   // pago por clase, sin turno fijo
+  MENSUAL      // turno fijo semanal recurrente
+}
+
 enum BookingEstado {
+  PENDIENTE  // Solicitud del alumno — esperando aprobación del profesor
   CONFIRMADO
   CANCELADO
   LIBERADO   // Cancelado y disponible para que otro alumno lo tome
@@ -67,9 +98,20 @@ model User {
   // Campos requeridos por Auth.js
   emailVerified DateTime?     // null = email no verificado todavía
   image         String?       // foto de perfil (viene de Google OAuth)
+  fotoPerfil    String?       // URL de foto personalizada (sobreescribe image de Google)
 
   rol           UserRol       @default(STUDENT)
   alumnoEstado  AlumnoEstado?
+  nivelJugador  NivelJugador?
+  password      String?
+  esMenor       Boolean       @default(false)
+  tutorNombre   String?
+  tutorTelefono String?
+  fechaNacimiento DateTime?
+  tipoDocumento   TipoDocumento?
+  nroDocumento    String?
+  modalidadClase  ModalidadClase  @default(MENSUAL)
+  clubNombre      String?
 
   tenantId      String?
   tenant        Tenant?       @relation(fields: [tenantId], references: [id])
@@ -156,11 +198,22 @@ model Tenant {
   fotoPerfil        String?               // URL en Supabase Storage
   experienciaAnios  Int?                  // ej: 15
   whatsapp          String?               // ej: "+5491112345678"
+  precioMensual     Float?                // legacy — usar precioPorHora
+  precioPorHora     Float?                // ej: 15000 — base para cálculo de mensualidad
+  ciudad            String?               // ej: "Buenos Aires"
 
   usuarios          User[]
   turnos            ScheduleSlot[]
   pagos             Pago[]
-  clubes            TenantClub[]
+
+  // Relaciones ProfesorClub (profesor ↔ club)
+  profes            ProfesorClub[] @relation("ProfesoresDelClub")  // solo para tipo=CLUB
+  clubes            ProfesorClub[] @relation("ProfesorEnClub")     // solo para tipo=PROFESOR
+
+  // Relaciones JefeEmpleado (profesor jefe ↔ profesor empleado)
+  empleados         JefeEmpleado[] @relation("EmpleadosDelJefe")
+  jefes             JefeEmpleado[] @relation("JefesDelEmpleado")
+  slotsComoEmpleado ScheduleSlot[] @relation("SlotsComoEmpleado")
 
   @@map("tenants")
 }
@@ -172,12 +225,20 @@ model ScheduleSlot {
   diaSemana   Int       // 0=domingo, 1=lunes, ..., 6=sábado
   horaInicio  String    // "HH:MM"
   duracionMin Int       @default(60)
-  activo      Boolean   @default(true)
-  creadoEn    DateTime  @default(now())
+  activo          Boolean      @default(true)
+  tipoClase       TipoClase    @default(INDIVIDUAL)
+  capacidadMaxima Int          @default(1)
+  nivelRequerido  NivelJugador?
+  precioGrupal    Float?       // solo para GRUPAL: precio mensual fijo
+  creadoEn        DateTime     @default(now())
 
   // null = lo cubre el TENANT_OWNER; con valor = slot asignado a un profe STAFF
   profesorId  String?
   profesor    User?     @relation("SlotProfesor", fields: [profesorId], references: [id])
+
+  // Profesor empleado (Tenant externo) asignado a este slot por el jefe
+  empleadoTenantId String?
+  empleadoTenant   Tenant? @relation("SlotsComoEmpleado", fields: [empleadoTenantId], references: [id])
 
   reservas    Booking[]
 
@@ -185,32 +246,31 @@ model ScheduleSlot {
 }
 
 // ============================================================
-// CLUBES — solo datos de referencia, NO son tenants
-// Un profe puede trabajar en varios clubes
+// RELACIÓN PROFESOR ↔ CLUB
+// Un Tenant(tipo=PROFESOR) puede trabajar en varios Tenant(tipo=CLUB)
 // ============================================================
 
-model Club {
-  id        String       @id @default(cuid())
-  nombre    String
-  direccion String?
-  ciudad    String?
-  creadoEn  DateTime     @default(now())
+model ProfesorClub {
+  profesorTenantId  String
+  clubTenantId      String
+  profesorTenant    Tenant @relation("ProfesorEnClub",    fields: [profesorTenantId], references: [id])
+  clubTenant        Tenant @relation("ProfesoresDelClub", fields: [clubTenantId],     references: [id])
 
-  tenants   TenantClub[]
-
-  @@map("clubs")
+  @@id([profesorTenantId, clubTenantId])
+  @@map("profesor_clubs")
 }
 
-// Tabla intermedia: un profe puede estar en muchos clubes
-// y un club puede tener muchos profes
-model TenantClub {
-  tenantId  String
-  clubId    String
-  tenant    Tenant @relation(fields: [tenantId], references: [id])
-  club      Club   @relation(fields: [clubId], references: [id])
+// Relación entre un profesor jefe y sus profesores empleados (ambos tienen su propio Tenant)
+model JefeEmpleado {
+  jefeTenantId     String
+  empleadoTenantId String
+  creadoEn         DateTime @default(now())
 
-  @@id([tenantId, clubId])
-  @@map("tenant_clubs")
+  jefeTenant       Tenant @relation("EmpleadosDelJefe", fields: [jefeTenantId],     references: [id])
+  empleadoTenant   Tenant @relation("JefesDelEmpleado", fields: [empleadoTenantId], references: [id])
+
+  @@id([jefeTenantId, empleadoTenantId])
+  @@map("jefe_empleados")
 }
 
 model Booking {

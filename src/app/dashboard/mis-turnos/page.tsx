@@ -1,116 +1,149 @@
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { redirect } from "next/navigation"
-import { BookingEstado } from "@/generated/prisma/enums"
-import { cancelarTurno } from "./actions"
+import { BookingEstado, TipoClase, UserRol } from "@/generated/prisma/enums"
+import MisTurnosTabs, { type ReservaItem, type SolicitudItem, type SlotItem } from "./MisTurnosTabs"
 
-const DIAS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"]
-const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
+const TIPO_LABEL: Record<TipoClase, string> = {
+  INDIVIDUAL: "Individual",
+  PARTICULAR_CERRADA: "Grupo cerrado",
+  GRUPAL: "Grupal",
+}
 
 export default async function MisTurnosPage() {
   const session = await auth()
   if (!session) redirect("/login")
 
+  const student = await db.user.findUnique({
+    where: { id: session.user.id },
+    select: { tenantId: true, nivelJugador: true, rol: true },
+  })
+  if (!student || student.rol !== UserRol.STUDENT) redirect("/dashboard")
+
   const hoy = new Date()
   hoy.setUTCHours(0, 0, 0, 0)
-
   const fin = new Date(hoy)
   fin.setUTCDate(fin.getUTCDate() + 30)
-
-  const reservas = await db.booking.findMany({
-    where: {
-      studentId: session.user.id,
-      fecha: { gte: hoy, lte: fin },
-      estado: BookingEstado.CONFIRMADO,
-    },
-    include: {
-      slot: {
-        include: { tenant: { select: { nombre: true } } },
-      },
-    },
-    orderBy: { fecha: "asc" },
-  })
-
   const sietesDias = 7 * 24 * 60 * 60 * 1000
 
+  const [rawReservas, rawSolicitudes, rawSlots, rawConfirmadosFuturos] = await Promise.all([
+    // Bookings confirmados (30 días)
+    db.booking.findMany({
+      where: {
+        studentId: session.user.id,
+        fecha: { gte: hoy, lte: fin },
+        estado: BookingEstado.CONFIRMADO,
+      },
+      select: {
+        id: true,
+        fecha: true,
+        slotId: true,
+        slot: { select: { horaInicio: true, tenant: { select: { nombre: true } } } },
+      },
+      orderBy: { fecha: "asc" },
+    }),
+    // Solicitudes pendientes
+    db.booking.findMany({
+      where: {
+        studentId: session.user.id,
+        estado: BookingEstado.PENDIENTE,
+        fecha: { gte: hoy },
+      },
+      select: {
+        id: true,
+        fecha: true,
+        slotId: true,
+        slot: { select: { horaInicio: true } },
+      },
+      orderBy: { fecha: "asc" },
+    }),
+    // Slots disponibles del profesor
+    student.tenantId
+      ? db.scheduleSlot.findMany({
+          where: {
+            tenantId: student.tenantId,
+            activo: true,
+            ...(student.nivelJugador
+              ? { OR: [{ nivelRequerido: null }, { nivelRequerido: student.nivelJugador }] }
+              : { nivelRequerido: null }),
+          },
+          select: {
+            id: true,
+            diaSemana: true,
+            horaInicio: true,
+            tipoClase: true,
+            capacidadMaxima: true,
+            _count: {
+              select: {
+                reservas: {
+                  where: {
+                    fecha: { gte: hoy },
+                    estado: { in: [BookingEstado.CONFIRMADO, BookingEstado.PENDIENTE] },
+                  },
+                },
+              },
+            },
+          },
+          orderBy: [{ diaSemana: "asc" }, { horaInicio: "asc" }],
+        })
+      : Promise.resolve([]),
+    // Slots con reservas confirmadas futuras (para marcar "inscripto")
+    db.booking.findMany({
+      where: {
+        studentId: session.user.id,
+        fecha: { gte: hoy },
+        estado: BookingEstado.CONFIRMADO,
+      },
+      select: { slotId: true },
+    }),
+  ])
+
+  const slotsPendientesIds = new Set(rawSolicitudes.map((s) => s.slotId))
+  const slotsConfirmadosIds = new Set(rawConfirmadosFuturos.map((b) => b.slotId))
+
+  const reservas: ReservaItem[] = rawReservas.map((r) => ({
+    id: r.id,
+    fechaISO: r.fecha.toISOString(),
+    dia: r.fecha.getUTCDay(),
+    horaInicio: r.slot.horaInicio,
+    tenantNombre: r.slot.tenant.nombre,
+    esCancelable: r.fecha.getTime() - hoy.getTime() <= sietesDias,
+  }))
+
+  const solicitudes: SolicitudItem[] = rawSolicitudes.map((s) => ({
+    id: s.id,
+    fechaISO: s.fecha.toISOString(),
+    dia: s.fecha.getUTCDay(),
+    horaInicio: s.slot.horaInicio,
+  }))
+
+  const slots: SlotItem[] = rawSlots.map((slot) => {
+    const lugaresLibres = slot.capacidadMaxima - slot._count.reservas
+    const estado: SlotItem["estado"] = slotsConfirmadosIds.has(slot.id)
+      ? "inscripto"
+      : slotsPendientesIds.has(slot.id)
+      ? "solicitado"
+      : lugaresLibres <= 0
+      ? "lleno"
+      : "disponible"
+    return {
+      id: slot.id,
+      diaSemana: slot.diaSemana,
+      horaInicio: slot.horaInicio,
+      tipoClase: TIPO_LABEL[slot.tipoClase],
+      lugaresLibres,
+      estado,
+    }
+  })
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white border-b border-gray-200 px-6 py-4 flex items-center gap-4">
-        <a href="/dashboard" className="text-sm text-gray-500 hover:text-gray-700">
-          ← Dashboard
-        </a>
-        <h1 className="text-lg font-bold text-gray-900">Mis turnos</h1>
-      </nav>
-
-      <main className="max-w-md mx-auto p-6 space-y-4">
-
-        {/* Botón pagar mensualidad — destacado arriba */}
-        <button className="w-full bg-green-700 text-white py-4 rounded-2xl font-bold text-base hover:bg-green-800 active:scale-[0.98] transition-all shadow-sm">
-          Pagar mensualidad
-        </button>
-
-        {/* Lista de turnos */}
-        {reservas.length === 0 ? (
-          <div className="text-center py-16 text-gray-400">
-            <div className="text-5xl mb-4">🎾</div>
-            <p className="font-medium text-gray-500">No tenés turnos próximos</p>
-            <p className="text-sm mt-1">Contactá a tu profesor para reservar</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-1">
-              Próximos 30 días
-            </p>
-
-            {reservas.map((reserva) => {
-              const fecha = reserva.fecha
-              // El botón cancelar solo aparece si el turno es dentro de los próximos 7 días
-              const esCancelable = fecha.getTime() - hoy.getTime() <= sietesDias
-
-              return (
-                <div
-                  key={reserva.id}
-                  className="bg-white rounded-2xl border border-gray-100 p-5 flex items-center gap-4 shadow-sm"
-                >
-                  {/* Fecha — número de día y mes */}
-                  <div className="flex-shrink-0 w-12 text-center">
-                    <div className="text-2xl font-black text-gray-900 leading-none">
-                      {fecha.getUTCDate()}
-                    </div>
-                    <div className="text-xs text-gray-400 uppercase mt-0.5">
-                      {MESES[fecha.getUTCMonth()]}
-                    </div>
-                  </div>
-
-                  <div className="w-px h-10 bg-gray-100 flex-shrink-0" />
-
-                  {/* Info del turno */}
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-gray-900">
-                      {DIAS[fecha.getUTCDay()]} · {reserva.slot.horaInicio}
-                    </p>
-                    <p className="text-sm text-gray-400 truncate">
-                      {reserva.slot.tenant.nombre}
-                    </p>
-                  </div>
-
-                  {/* Cancelar solo si es esta semana */}
-                  {esCancelable && (
-                    <form action={cancelarTurno.bind(null, reserva.id)}>
-                      <button
-                        type="submit"
-                        className="text-xs text-red-400 hover:text-red-600 font-medium transition-colors whitespace-nowrap"
-                      >
-                        Cancelar
-                      </button>
-                    </form>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </main>
+    <div className="max-w-md">
+      <MisTurnosTabs
+        reservas={reservas}
+        solicitudes={solicitudes}
+        slots={slots}
+        tieneTenant={!!student.tenantId}
+      />
     </div>
   )
 }

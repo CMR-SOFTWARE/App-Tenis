@@ -10,5 +10,7 @@ export default defineConfig({
   },
   datasource: {
     url: process.env["DATABASE_URL"],
+    // @ts-expect-error Prisma v7 types not updated yet; runtime supports directUrl for db push
+    directUrl: process.env["DIRECT_URL"],
   },
 });

@@ -1,9 +1,28 @@
-import { auth, signOut } from "@/lib/auth"
+import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { redirect } from "next/navigation"
-import { UserRol } from "@/generated/prisma/enums"
+import { BookingEstado, NivelJugador, TenantTipo, UserRol } from "@/generated/prisma/enums"
+import ProfesorPanel from "./ProfesorPanel"
 
-export default async function DashboardPage() {
+const NIVEL_LABELS: Record<NivelJugador, string> = {
+  SEPTIMA: "7ma",
+  SEXTA: "6ta",
+  QUINTA: "5ta",
+  CUARTA: "4ta",
+  TERCERA: "3ra",
+  SEGUNDA: "2da",
+  PRIMERA: "1ra",
+}
+
+const DIAS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"]
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ mes?: string }>
+}) {
+  const { mes } = await searchParams
+
   const session = await auth()
   if (!session) redirect("/login")
 
@@ -12,93 +31,167 @@ export default async function DashboardPage() {
     include: { tenant: true },
   })
 
-  // Solo los profesores (TENANT_OWNER / STAFF) necesitan completar el onboarding
-  // Los alumnos y el super admin entran directo al dashboard
-  const esProfesor = user?.rol === UserRol.TENANT_OWNER || user?.rol === UserRol.STAFF
-  if (esProfesor && !user?.tenantId) redirect("/onboarding")
+  const esProfesor =
+    (user?.rol === UserRol.TENANT_OWNER || user?.rol === UserRol.STAFF) &&
+    user?.tenant?.tipo !== TenantTipo.CLUB
 
+  const esClub = user?.rol === UserRol.TENANT_OWNER && user?.tenant?.tipo === TenantTipo.CLUB
   const esAlumno = user?.rol === UserRol.STUDENT
 
+  // Datos para el panel del alumno
+  let proximaTurno: { fecha: Date; slot: { horaInicio: string } } | null = null
+  let totalClasesMes = 0
+
+  if (esAlumno && user) {
+    const now = new Date()
+    const startOfMes = new Date(now.getFullYear(), now.getMonth(), 1)
+    const endOfMes = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
+
+    const [booking, clasesMes] = await Promise.all([
+      db.booking.findFirst({
+        where: {
+          studentId: user.id,
+          estado: BookingEstado.CONFIRMADO,
+          fecha: { gte: now },
+        },
+        orderBy: { fecha: "asc" },
+        select: { fecha: true, slot: { select: { horaInicio: true } } },
+      }),
+      db.booking.count({
+        where: {
+          studentId: user.id,
+          estado: BookingEstado.CONFIRMADO,
+          fecha: { gte: startOfMes, lte: endOfMes },
+        },
+      }),
+    ])
+
+    proximaTurno = booking
+    totalClasesMes = clasesMes
+  }
+
+  const subdominio = user?.tenant?.subdominio
+  const nombreAlumno = user?.nombre ?? user?.name?.split(" ")[0] ?? "alumno"
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-        <h1 className="text-xl font-bold text-gray-900">AcePro</h1>
+    <div className="space-y-6">
+      {esProfesor && user?.tenantId && (
+        <ProfesorPanel tenantId={user.tenantId} mes={mes} subdominio={subdominio} />
+      )}
 
-        <div className="flex items-center gap-4">
-          {session.user.image && (
-            <img src={session.user.image} alt="Foto de perfil" className="w-8 h-8 rounded-full" />
-          )}
-          <span className="text-sm text-gray-600">
-            {user?.tenant?.nombre ?? session.user.email}
-          </span>
-          <form
-            action={async () => {
-              "use server"
-              await signOut({ redirectTo: "/login" })
-            }}
-          >
-            <button type="submit" className="text-sm text-red-500 hover:text-red-700">
-              Cerrar sesión
-            </button>
-          </form>
-        </div>
-      </nav>
-
-      <main className="max-w-4xl mx-auto p-8">
-        <h2 className="text-2xl font-semibold text-gray-800 mb-2">
-          Bienvenido, {user?.nombre ?? user?.name ?? session.user.email}
-        </h2>
-        <p className="text-gray-500 mb-8">
-          {user?.tenant?.nombre && (
-            <>Academia: <span className="font-medium text-gray-700">{user.tenant.nombre}</span> · </>
-          )}
-          Rol: <span className="font-medium text-gray-700">{user?.rol}</span>
-        </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-
-          {/* Card "Mis turnos" — distinto según rol */}
-          {esAlumno ? (
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <h3 className="font-semibold text-gray-700 mb-1">Mis turnos</h3>
-              <p className="text-gray-400 text-sm mb-3">Tus próximas clases</p>
-              <a href="/dashboard/mis-turnos" className="text-sm text-green-700 font-medium hover:underline">
-                Ver mis turnos →
-              </a>
-            </div>
-          ) : (
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <h3 className="font-semibold text-gray-700 mb-1">Turnos</h3>
-              <p className="text-gray-400 text-sm mb-3">Gestioná tus horarios</p>
-              <a href="/dashboard/turnos" className="text-sm text-green-700 font-medium hover:underline">
-                Gestionar →
-              </a>
-            </div>
-          )}
-
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <h3 className="font-semibold text-gray-700 mb-1">Alumnos</h3>
-            <p className="text-gray-400 text-sm">Próximamente</p>
+      {esAlumno && user && (
+        <div className="space-y-4">
+          {/* Greeting */}
+          <div className="flex items-center gap-3">
+            <h2 className="text-xl font-bold text-gray-900">
+              Hola, {nombreAlumno}
+            </h2>
+            {user.nivelJugador && (
+              <span className="text-xs font-semibold bg-green-100 text-green-800 px-2.5 py-1 rounded-full">
+                {NIVEL_LABELS[user.nivelJugador]} cat.
+              </span>
+            )}
           </div>
 
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <h3 className="font-semibold text-gray-700 mb-1">Pagos</h3>
-            <p className="text-gray-400 text-sm">Próximamente</p>
-          </div>
-
-          {/* Solo el profe ve la configuración */}
-          {!esAlumno && (
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <h3 className="font-semibold text-gray-700 mb-1">Perfil</h3>
-              <p className="text-gray-400 text-sm mb-3">Editá tu landing pública</p>
-              <a href="/dashboard/configuracion" className="text-sm text-green-700 font-medium hover:underline">
-                Configurar →
+          {/* Banner: sin profesor */}
+          {!user.tenantId && (
+            <div className="bg-green-50 border border-green-200 rounded-xl p-5 flex items-center justify-between gap-4">
+              <div>
+                <p className="font-semibold text-green-900 text-sm">Encontrá tu profesor</p>
+                <p className="text-green-700 text-xs mt-1">
+                  Buscá profesores por nombre o ciudad y reservá tus clases
+                </p>
+              </div>
+              <a
+                href="/profesores"
+                className="shrink-0 bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-800 transition-colors"
+              >
+                Buscar →
               </a>
             </div>
           )}
 
+          {/* Card: mi profesor */}
+          {user.tenant && (
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <p className="text-xs text-gray-400 mb-2 font-medium uppercase tracking-wide">Mi profesor</p>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="font-semibold text-gray-800">{user.tenant.nombre}</p>
+                  {user.tenant.ciudad && (
+                    <p className="text-xs text-gray-400 mt-0.5">📍 {user.tenant.ciudad}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {user.tenant.whatsapp && (
+                    <a
+                      href={`https://wa.me/${user.tenant.whatsapp.replace(/\D/g, "")}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-green-700 border border-green-200 bg-green-50 px-3 py-1.5 rounded-lg hover:bg-green-100 transition-colors"
+                    >
+                      WhatsApp
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* KPIs */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <p className="text-xs text-gray-400 mb-2">Próxima clase</p>
+              {proximaTurno ? (
+                <div>
+                  <p className="text-lg font-black text-gray-900 leading-none">
+                    {proximaTurno.slot.horaInicio}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1.5">
+                    {DIAS[proximaTurno.fecha.getUTCDay()]}{" "}
+                    {proximaTurno.fecha.getUTCDate()}/{proximaTurno.fecha.getUTCMonth() + 1}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400">Sin turnos</p>
+              )}
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <p className="text-xs text-gray-400 mb-2">Clases este mes</p>
+              <p className="text-3xl font-black text-gray-900 leading-none">{totalClasesMes}</p>
+            </div>
+          </div>
+
+          {/* Quick links */}
+          <div className="grid grid-cols-2 gap-3">
+            <a
+              href="/dashboard/mis-turnos"
+              className="bg-white rounded-xl border border-gray-200 p-4 hover:bg-gray-50 transition-colors group"
+            >
+              <p className="text-sm font-semibold text-gray-700 group-hover:text-green-700">
+                Mis turnos →
+              </p>
+              <p className="text-xs text-gray-400 mt-1">Ver y gestionar reservas</p>
+            </a>
+            <a
+              href="/dashboard/mi-perfil"
+              className="bg-white rounded-xl border border-gray-200 p-4 hover:bg-gray-50 transition-colors group"
+            >
+              <p className="text-sm font-semibold text-gray-700 group-hover:text-green-700">
+                Mi perfil →
+              </p>
+              <p className="text-xs text-gray-400 mt-1">Actualizar mis datos</p>
+            </a>
+          </div>
         </div>
-      </main>
+      )}
+
+      {esClub && (
+        <div className="bg-white rounded-xl border border-gray-200 p-10 text-center">
+          <p className="text-gray-400 text-sm">Panel de club — próximamente</p>
+        </div>
+      )}
     </div>
   )
 }

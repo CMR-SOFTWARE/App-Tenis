@@ -16,8 +16,11 @@ export async function actualizarPerfil(
   const nombre = (formData.get("nombre") as string)?.trim()
   const bio = (formData.get("bio") as string)?.trim() || null
   const whatsapp = (formData.get("whatsapp") as string)?.trim() || null
+  const ciudad = (formData.get("ciudad") as string)?.trim() || null
   const experienciaAniosStr = (formData.get("experienciaAnios") as string)?.trim()
   const experienciaAnios = experienciaAniosStr ? parseInt(experienciaAniosStr, 10) : null
+  const precioMensualStr = (formData.get("precioMensual") as string)?.trim()
+  const precioMensual = precioMensualStr ? parseFloat(precioMensualStr) : null
 
   // Validaciones
   if (!nombre || nombre.length < 2) {
@@ -25,6 +28,9 @@ export async function actualizarPerfil(
   }
   if (experienciaAnios !== null && (isNaN(experienciaAnios) || experienciaAnios < 0 || experienciaAnios > 80)) {
     return { error: "Los años de experiencia deben ser un número entre 0 y 80" }
+  }
+  if (precioMensual !== null && (isNaN(precioMensual) || precioMensual < 0)) {
+    return { error: "El precio mensual debe ser un número positivo" }
   }
 
   // Verificar que el usuario tiene un tenant (es TENANT_OWNER o STAFF)
@@ -37,7 +43,7 @@ export async function actualizarPerfil(
   // Actualizar el Tenant con los nuevos datos de la landing
   await db.tenant.update({
     where: { id: user.tenantId },
-    data: { nombre, bio, whatsapp, experienciaAnios },
+    data: { nombre, bio, whatsapp, ciudad, experienciaAnios, precioMensual },
   })
 
   return { success: "¡Perfil actualizado correctamente!" }
