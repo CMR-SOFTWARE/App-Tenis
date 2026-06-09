@@ -520,7 +520,7 @@ export async function confirmarSolicitud(bookingId: string): Promise<void> {
     data: { estado: BookingEstado.CONFIRMADO },
   })
 
-  revalidateTag(`tenant-${tenantId}`)
+  revalidateTag(`tenant-${tenantId}`, {})
   revalidatePath("/dashboard")
   revalidatePath("/dashboard/mis-turnos")
 }
@@ -541,7 +541,7 @@ export async function rechazarSolicitud(bookingId: string): Promise<void> {
     data: { estado: BookingEstado.CANCELADO },
   })
 
-  revalidateTag(`tenant-${tenantId}`)
+  revalidateTag(`tenant-${tenantId}`, {})
   revalidatePath("/dashboard")
   revalidatePath("/dashboard/mis-turnos")
 }

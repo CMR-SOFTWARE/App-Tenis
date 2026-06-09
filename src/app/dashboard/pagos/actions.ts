@@ -89,7 +89,7 @@ export async function generarResumenesMes(mes: string) {
     generados++
   }
 
-  revalidateTag(`tenant-${profe.tenantId}`)
+  revalidateTag(`tenant-${profe.tenantId}`, {})
   revalidatePath("/dashboard/pagos")
   return { ok: true, generados }
 }

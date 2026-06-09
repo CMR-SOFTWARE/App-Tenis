@@ -84,7 +84,7 @@ export async function actualizarPerfilAlumno(
     },
   })
 
-  revalidateTag("user-profile")
+  revalidateTag("user-profile", {})
   revalidatePath("/dashboard/mi-perfil")
   revalidatePath("/dashboard")
   return { ok: true }

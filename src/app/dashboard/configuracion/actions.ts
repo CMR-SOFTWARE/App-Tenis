@@ -43,7 +43,7 @@ export async function actualizarPerfil(
     data: { nombre, bio, whatsapp, ciudad, experienciaAnios, precioMensual },
   })
 
-  revalidateTag("user-profile")
+  revalidateTag("user-profile", {})
   revalidatePath("/dashboard/configuracion")
   revalidatePath("/dashboard")
   return { success: "¡Perfil actualizado correctamente!" }
