@@ -14,11 +14,10 @@ export default async function MisTurnosPage() {
   const session = await auth()
   if (!session) redirect("/login")
 
-  const student = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { tenantId: true, nivelJugador: true, rol: true },
-  })
-  if (!student || student.rol !== UserRol.STUDENT) redirect("/dashboard")
+  // tenantId, nivelJugador y rol vienen del JWT
+  if (session.user.rol !== UserRol.STUDENT) redirect("/dashboard")
+  const tenantId = session.user.tenantId
+  const nivelJugador = session.user.nivelJugador
 
   const hoy = new Date()
   hoy.setUTCHours(0, 0, 0, 0)
@@ -58,13 +57,13 @@ export default async function MisTurnosPage() {
       orderBy: { fecha: "asc" },
     }),
     // Slots disponibles del profesor
-    student.tenantId
+    tenantId
       ? db.scheduleSlot.findMany({
           where: {
-            tenantId: student.tenantId,
+            tenantId,
             activo: true,
-            ...(student.nivelJugador
-              ? { OR: [{ nivelRequerido: null }, { nivelRequerido: student.nivelJugador }] }
+            ...(nivelJugador
+              ? { OR: [{ nivelRequerido: null }, { nivelRequerido: nivelJugador }] }
               : { nivelRequerido: null }),
           },
           select: {
@@ -142,7 +141,6 @@ export default async function MisTurnosPage() {
         reservas={reservas}
         solicitudes={solicitudes}
         slots={slots}
-        tieneTenant={!!student.tenantId}
       />
     </div>
   )

@@ -1,4 +1,5 @@
 import { db } from "@/lib/db"
+import { unstable_cache } from "next/cache"
 import { AlumnoEstado, BookingEstado, ModalidadClase, NivelJugador, PagoEstado, UserRol } from "@/generated/prisma/enums"
 import CancelarDiaPanel from "./CancelarDiaPanel"
 import { confirmarSolicitud, rechazarSolicitud } from "./turnos/actions"
@@ -31,163 +32,181 @@ export default async function ProfesorPanel({
     mes ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
   const [y, m] = mesStr.split("-").map(Number)
 
-  const startOfMes = new Date(y, m - 1, 1)
-  const endOfMes = new Date(y, m, 0, 23, 59, 59, 999)
-
   const prevDate = new Date(y, m - 2, 1)
   const nextDate = new Date(y, m, 1)
   const prevMesStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`
   const nextMesStr = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, "0")}`
-  const periodoLabel = startOfMes.toLocaleDateString("es-AR", {
+  const periodoLabel = new Date(y, m - 1, 1).toLocaleDateString("es-AR", {
     month: "long",
     year: "numeric",
   })
 
-  const todayStart = new Date()
-  todayStart.setHours(0, 0, 0, 0)
-  const sevenDays = new Date(todayStart)
-  sevenDays.setDate(sevenDays.getDate() + 7)
+  // Cache de 5 minutos por tenant + mes. Se invalida con revalidateTag(`tenant-${tenantId}`)
+  // desde las actions de turnos y pagos cuando hay cambios de datos.
+  const getPanelData = unstable_cache(
+    async () => {
+      const startOfMes = new Date(y, m - 1, 1)
+      const endOfMes = new Date(y, m, 0, 23, 59, 59, 999)
+      const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1)
+      const todayStart = new Date()
+      todayStart.setHours(0, 0, 0, 0)
+      const sevenDays = new Date(todayStart)
+      sevenDays.setDate(sevenDays.getDate() + 7)
 
-  const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1)
+      // Batch 1: 9 queries en paralelo (5 count → 1 groupBy, solicitudes y equipo incluidos)
+      const [
+        alumnosByEstadoRaw,
+        alumnosNuevosDelMes,
+        clasesDelMes,
+        ingresosAgg,
+        bookings6m,
+        pagos6m,
+        proximosRaw,
+        solicitudesPendientes,
+        relacionesEquipo,
+      ] = await Promise.all([
+        db.user.groupBy({
+          by: ["alumnoEstado", "modalidadClase"],
+          where: { tenantId, rol: UserRol.STUDENT },
+          _count: { id: true },
+        }),
+        db.user.count({
+          where: { tenantId, rol: UserRol.STUDENT, creadoEn: { gte: startOfMes, lte: endOfMes } },
+        }),
+        db.booking.count({
+          where: { slot: { tenantId }, fecha: { gte: startOfMes, lte: endOfMes }, estado: BookingEstado.CONFIRMADO },
+        }),
+        db.pago.aggregate({
+          _sum: { monto: true },
+          where: { tenantId, estado: PagoEstado.CONFIRMADO, creadoEn: { gte: startOfMes, lte: endOfMes } },
+        }),
+        db.booking.findMany({
+          where: { slot: { tenantId }, fecha: { gte: sixMonthsAgo }, estado: BookingEstado.CONFIRMADO },
+          select: { fecha: true },
+        }),
+        db.pago.findMany({
+          where: { tenantId, estado: PagoEstado.CONFIRMADO, creadoEn: { gte: sixMonthsAgo } },
+          select: { monto: true, creadoEn: true },
+        }),
+        db.booking.findMany({
+          where: { slot: { tenantId }, fecha: { gte: todayStart, lte: sevenDays }, estado: BookingEstado.CONFIRMADO },
+          orderBy: { fecha: "asc" },
+          select: {
+            fecha: true,
+            slot: { select: { horaInicio: true } },
+            student: { select: { nombre: true, apellido: true, name: true } },
+          },
+          take: 10,
+        }),
+        db.booking.findMany({
+          where: { slot: { tenantId }, estado: BookingEstado.PENDIENTE, fecha: { gte: new Date() } },
+          include: {
+            student: { select: { nombre: true, apellido: true, name: true, nivelJugador: true } },
+            slot: { select: { diaSemana: true, horaInicio: true } },
+          },
+          orderBy: { creadoEn: "asc" },
+        }),
+        db.jefeEmpleado.findMany({
+          where: { jefeTenantId: tenantId },
+          include: { empleadoTenant: { select: { id: true, nombre: true, subdominio: true } } },
+          orderBy: { creadoEn: "asc" },
+        }),
+      ])
 
-  const [
-    alumnosActivos,
-    alumnosSuspendidos,
-    alumnosPendientes,
-    alumnosMensual,
-    alumnosParticular,
+      // Batch 2: fix N+1 del equipo — 2 queries para todos los empleados
+      const empleadoIds = relacionesEquipo.map((r) => r.empleadoTenantId)
+      const [slotCountsEquipoRaw, bookingsEquipoMes] = await Promise.all([
+        db.scheduleSlot.groupBy({
+          by: ["empleadoTenantId"],
+          where: { tenantId, empleadoTenantId: { in: empleadoIds } },
+          _count: { id: true },
+        }),
+        db.booking.findMany({
+          where: {
+            slot: { tenantId, empleadoTenantId: { in: empleadoIds } },
+            fecha: { gte: startOfMes, lte: endOfMes },
+            estado: BookingEstado.CONFIRMADO,
+          },
+          select: { slot: { select: { empleadoTenantId: true } } },
+        }),
+      ])
+
+      return {
+        alumnosByEstadoRaw,
+        alumnosNuevosDelMes,
+        clasesDelMes,
+        ingresosAgg,
+        bookings6m,
+        pagos6m,
+        proximosRaw,
+        solicitudesPendientes,
+        relacionesEquipo,
+        slotCountsEquipoRaw,
+        bookingsEquipoMes,
+      }
+    },
+    [`profesor-panel-${tenantId}-${mesStr}`],
+    { revalidate: 300, tags: [`tenant-${tenantId}`] }
+  )
+
+  const {
+    alumnosByEstadoRaw,
     alumnosNuevosDelMes,
     clasesDelMes,
     ingresosAgg,
     bookings6m,
     pagos6m,
     proximosRaw,
-  ] = await Promise.all([
-    db.user.count({ where: { tenantId, alumnoEstado: AlumnoEstado.ACTIVO } }),
-    db.user.count({ where: { tenantId, alumnoEstado: AlumnoEstado.SUSPENDIDO } }),
-    db.user.count({ where: { tenantId, alumnoEstado: AlumnoEstado.STANDBY } }),
-    db.user.count({
-      where: {
-        tenantId,
-        rol: UserRol.STUDENT,
-        modalidadClase: ModalidadClase.MENSUAL,
-        alumnoEstado: AlumnoEstado.ACTIVO,
-      },
-    }),
-    db.user.count({
-      where: {
-        tenantId,
-        rol: UserRol.STUDENT,
-        modalidadClase: ModalidadClase.PARTICULAR,
-        alumnoEstado: AlumnoEstado.ACTIVO,
-      },
-    }),
-    db.user.count({
-      where: {
-        tenantId,
-        rol: UserRol.STUDENT,
-        creadoEn: { gte: startOfMes, lte: endOfMes },
-      },
-    }),
-    db.booking.count({
-      where: {
-        slot: { tenantId },
-        fecha: { gte: startOfMes, lte: endOfMes },
-        estado: BookingEstado.CONFIRMADO,
-      },
-    }),
-    db.pago.aggregate({
-      _sum: { monto: true },
-      where: {
-        tenantId,
-        estado: PagoEstado.CONFIRMADO,
-        creadoEn: { gte: startOfMes, lte: endOfMes },
-      },
-    }),
-    db.booking.findMany({
-      where: {
-        slot: { tenantId },
-        fecha: { gte: sixMonthsAgo },
-        estado: BookingEstado.CONFIRMADO,
-      },
-      select: { fecha: true },
-    }),
-    db.pago.findMany({
-      where: {
-        tenantId,
-        estado: PagoEstado.CONFIRMADO,
-        creadoEn: { gte: sixMonthsAgo },
-      },
-      select: { monto: true, creadoEn: true },
-    }),
-    db.booking.findMany({
-      where: {
-        slot: { tenantId },
-        fecha: { gte: todayStart, lte: sevenDays },
-        estado: BookingEstado.CONFIRMADO,
-      },
-      orderBy: { fecha: "asc" },
-      select: {
-        fecha: true,
-        slot: { select: { horaInicio: true } },
-        student: { select: { nombre: true, apellido: true, name: true } },
-      },
-      take: 10,
-    }),
-  ])
+    solicitudesPendientes,
+    relacionesEquipo,
+    slotCountsEquipoRaw,
+    bookingsEquipoMes,
+  } = await getPanelData()
+
+  // Derivar counts desde groupBy (O(n) en memoria, sin queries extra)
+  const alumnosActivos = alumnosByEstadoRaw
+    .filter((g) => g.alumnoEstado === AlumnoEstado.ACTIVO)
+    .reduce((s, g) => s + g._count.id, 0)
+  const alumnosSuspendidos = alumnosByEstadoRaw
+    .filter((g) => g.alumnoEstado === AlumnoEstado.SUSPENDIDO)
+    .reduce((s, g) => s + g._count.id, 0)
+  const alumnosPendientes = alumnosByEstadoRaw
+    .filter((g) => g.alumnoEstado === AlumnoEstado.STANDBY)
+    .reduce((s, g) => s + g._count.id, 0)
+  const alumnosMensual = alumnosByEstadoRaw
+    .filter((g) => g.alumnoEstado === AlumnoEstado.ACTIVO && g.modalidadClase === ModalidadClase.MENSUAL)
+    .reduce((s, g) => s + g._count.id, 0)
+  const alumnosParticular = alumnosByEstadoRaw
+    .filter((g) => g.alumnoEstado === AlumnoEstado.ACTIVO && g.modalidadClase === ModalidadClase.PARTICULAR)
+    .reduce((s, g) => s + g._count.id, 0)
 
   const ingresosDelMes = ingresosAgg._sum.monto ?? 0
 
-  // Solicitudes de turno pendientes de alumnos
-  const solicitudesPendientes = await db.booking.findMany({
-    where: {
-      slot: { tenantId },
-      estado: BookingEstado.PENDIENTE,
-      fecha: { gte: new Date() },
-    },
-    include: {
-      student: { select: { nombre: true, apellido: true, name: true, nivelJugador: true } },
-      slot: { select: { diaSemana: true, horaInicio: true } },
-    },
-    orderBy: { creadoEn: "asc" },
-  })
-
-  // Equipo del jefe
-  const relacionesEquipo = await db.jefeEmpleado.findMany({
-    where: { jefeTenantId: tenantId },
-    include: { empleadoTenant: { select: { id: true, nombre: true, subdominio: true } } },
-    orderBy: { creadoEn: "asc" },
-  })
-
-  const equipo = await Promise.all(
-    relacionesEquipo.map(async (r) => {
-      const [slotsAsignados, clasesDelMes] = await Promise.all([
-        db.scheduleSlot.count({ where: { tenantId, empleadoTenantId: r.empleadoTenantId } }),
-        db.booking.count({
-          where: {
-            slot: { tenantId, empleadoTenantId: r.empleadoTenantId },
-            fecha: { gte: startOfMes, lte: endOfMes },
-            estado: BookingEstado.CONFIRMADO,
-          },
-        }),
-      ])
-      return {
-        tenantId: r.empleadoTenant.id,
-        nombre: r.empleadoTenant.nombre,
-        subdominio: r.empleadoTenant.subdominio,
-        slotsAsignados,
-        clasesDelMes,
-      }
-    })
+  // Construir equipo desde batch queries
+  const slotCountEquipoMap = new Map(
+    slotCountsEquipoRaw.map((r) => [r.empleadoTenantId, r._count.id])
   )
+  const bookingCountEquipoMap = new Map<string, number>()
+  for (const b of bookingsEquipoMes) {
+    const eid = b.slot.empleadoTenantId
+    if (eid) bookingCountEquipoMap.set(eid, (bookingCountEquipoMap.get(eid) ?? 0) + 1)
+  }
+  const equipo = relacionesEquipo.map((r) => ({
+    tenantId: r.empleadoTenant.id,
+    nombre: r.empleadoTenant.nombre,
+    subdominio: r.empleadoTenant.subdominio,
+    slotsAsignados: slotCountEquipoMap.get(r.empleadoTenantId) ?? 0,
+    clasesDelMes: bookingCountEquipoMap.get(r.empleadoTenantId) ?? 0,
+  }))
 
+  // Historial 6 meses (derivado de bookings6m y pagos6m ya cacheados)
   const historial = Array.from({ length: 6 }, (_, i) => {
     const d = new Date(now.getFullYear(), now.getMonth() - 5 + i, 1)
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
     const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59)
-    const clases = bookings6m.filter((b) => b.fecha >= d && b.fecha <= end).length
+    const clases = bookings6m.filter((b) => new Date(b.fecha) >= d && new Date(b.fecha) <= end).length
     const ingresos = pagos6m
-      .filter((p) => p.creadoEn >= d && p.creadoEn <= end)
+      .filter((p) => new Date(p.creadoEn) >= d && new Date(p.creadoEn) <= end)
       .reduce((s, p) => s + p.monto, 0)
     return {
       mes: key,
@@ -258,10 +277,7 @@ export default async function ProfesorPanel({
                   <div
                     className={`h-1.5 rounded-full ${row.bar}`}
                     style={{
-                      width:
-                        totalAlumnos > 0
-                          ? `${(row.count / totalAlumnos) * 100}%`
-                          : "0%",
+                      width: totalAlumnos > 0 ? `${(row.count / totalAlumnos) * 100}%` : "0%",
                     }}
                   />
                 </div>
@@ -299,8 +315,8 @@ export default async function ProfesorPanel({
                 <div key={i} className="flex items-center justify-between py-2">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-medium text-gray-500 w-14">
-                      {DIAS[t.fecha.getUTCDay()]}{" "}
-                      {t.fecha.getUTCDate()}/{t.fecha.getUTCMonth() + 1}
+                      {DIAS[new Date(t.fecha).getUTCDay()]}{" "}
+                      {new Date(t.fecha).getUTCDate()}/{new Date(t.fecha).getUTCMonth() + 1}
                     </span>
                     <span className="text-xs font-mono text-gray-400">
                       {t.slot.horaInicio}
@@ -442,10 +458,7 @@ export default async function ProfesorPanel({
                   <span>
                     <strong className="text-gray-700">{e.clasesDelMes}</strong> clases
                   </span>
-                  <a
-                    href="/dashboard/turnos"
-                    className="text-blue-600 hover:underline text-xs"
-                  >
+                  <a href="/dashboard/turnos" className="text-blue-600 hover:underline text-xs">
                     Ver agenda →
                   </a>
                 </div>

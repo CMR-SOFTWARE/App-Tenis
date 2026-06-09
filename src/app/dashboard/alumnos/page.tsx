@@ -10,17 +10,14 @@ export default async function AlumnosPage() {
   const session = await auth()
   if (!session) redirect("/login")
 
-  const user = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { tenantId: true, rol: true },
-  })
-  if (!user?.tenantId) redirect("/onboarding")
-  if (user.rol === UserRol.STUDENT) redirect("/dashboard")
+  const tenantId = session.user.tenantId
+  if (!tenantId) redirect("/onboarding")
+  if (session.user.rol === UserRol.STUDENT) redirect("/dashboard")
 
   const hoy = new Date()
 
   const rawAlumnos = await db.user.findMany({
-    where: { tenantId: user.tenantId, rol: UserRol.STUDENT },
+    where: { tenantId, rol: UserRol.STUDENT },
     select: {
       id: true,
       nombre: true,
@@ -46,6 +43,7 @@ export default async function AlumnosPage() {
       },
     },
     orderBy: [{ apellido: "asc" }, { nombre: "asc" }],
+    take: 50,
   })
 
   const alumnos: AlumnoRow[] = rawAlumnos.map((a) => {

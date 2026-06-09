@@ -2,6 +2,7 @@
 
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
+import { revalidatePath, revalidateTag } from "next/cache"
 
 type ActionState = { error?: string; success?: string } | null
 
@@ -11,6 +12,10 @@ export async function actualizarPerfil(
 ): Promise<ActionState> {
   const session = await auth()
   if (!session?.user?.id) return { error: "No estás autenticado" }
+
+  // tenantId viene del JWT — no hace falta query extra a la DB
+  const tenantId = session.user.tenantId
+  if (!tenantId) return { error: "No tenés una academia asociada" }
 
   // Leer y limpiar campos del formulario
   const nombre = (formData.get("nombre") as string)?.trim()
@@ -33,18 +38,13 @@ export async function actualizarPerfil(
     return { error: "El precio mensual debe ser un número positivo" }
   }
 
-  // Verificar que el usuario tiene un tenant (es TENANT_OWNER o STAFF)
-  const user = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { tenantId: true },
-  })
-  if (!user?.tenantId) return { error: "No tenés una academia asociada" }
-
-  // Actualizar el Tenant con los nuevos datos de la landing
   await db.tenant.update({
-    where: { id: user.tenantId },
+    where: { id: tenantId },
     data: { nombre, bio, whatsapp, ciudad, experienciaAnios, precioMensual },
   })
 
+  revalidateTag("user-profile")
+  revalidatePath("/dashboard/configuracion")
+  revalidatePath("/dashboard")
   return { success: "¡Perfil actualizado correctamente!" }
 }

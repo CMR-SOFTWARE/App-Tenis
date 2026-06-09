@@ -8,13 +8,9 @@ export default async function EmpleadosPage() {
   const session = await auth()
   if (!session) redirect("/login")
 
-  const user = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { tenantId: true },
-  })
-  if (!user?.tenantId) redirect("/onboarding")
-
-  const tenantId = user.tenantId
+  // tenantId viene del JWT — no hace falta query a la DB
+  const tenantId = session.user.tenantId
+  if (!tenantId) redirect("/onboarding")
 
   const now = new Date()
   const startOfMes = new Date(now.getFullYear(), now.getMonth(), 1)
@@ -28,29 +24,42 @@ export default async function EmpleadosPage() {
     orderBy: { creadoEn: "asc" },
   })
 
-  const empleados: EmpleadoInfo[] = await Promise.all(
-    relaciones.map(async (r) => {
-      const [slotsAsignados, clasesDelMes] = await Promise.all([
-        db.scheduleSlot.count({
-          where: { tenantId, empleadoTenantId: r.empleadoTenantId },
-        }),
-        db.booking.count({
-          where: {
-            slot: { tenantId, empleadoTenantId: r.empleadoTenantId },
-            fecha: { gte: startOfMes, lte: endOfMes },
-            estado: BookingEstado.CONFIRMADO,
-          },
-        }),
-      ])
-      return {
-        tenantId: r.empleadoTenant.id,
-        nombre: r.empleadoTenant.nombre,
-        subdominio: r.empleadoTenant.subdominio,
-        slotsAsignados,
-        clasesDelMes,
-      }
-    })
+  const empleadoIds = relaciones.map((r) => r.empleadoTenantId)
+
+  // Batch queries: 2 queries para todos los empleados en vez de 2 * N queries (fix N+1)
+  const [slotCountsRaw, bookingsDelMes] = await Promise.all([
+    db.scheduleSlot.groupBy({
+      by: ["empleadoTenantId"],
+      where: { tenantId, empleadoTenantId: { in: empleadoIds } },
+      _count: { id: true },
+    }),
+    db.booking.findMany({
+      where: {
+        slot: { tenantId, empleadoTenantId: { in: empleadoIds } },
+        fecha: { gte: startOfMes, lte: endOfMes },
+        estado: BookingEstado.CONFIRMADO,
+      },
+      select: { slot: { select: { empleadoTenantId: true } } },
+    }),
+  ])
+
+  // Agrupar counts en memoria — O(n), sin round-trips extra
+  const slotCountMap = new Map(
+    slotCountsRaw.map((r) => [r.empleadoTenantId, r._count.id])
   )
+  const bookingCountMap = new Map<string, number>()
+  for (const b of bookingsDelMes) {
+    const eid = b.slot.empleadoTenantId
+    if (eid) bookingCountMap.set(eid, (bookingCountMap.get(eid) ?? 0) + 1)
+  }
+
+  const empleados: EmpleadoInfo[] = relaciones.map((r) => ({
+    tenantId: r.empleadoTenant.id,
+    nombre: r.empleadoTenant.nombre,
+    subdominio: r.empleadoTenant.subdominio,
+    slotsAsignados: slotCountMap.get(r.empleadoTenantId) ?? 0,
+    clasesDelMes: bookingCountMap.get(r.empleadoTenantId) ?? 0,
+  }))
 
   return (
     <div className="space-y-2">

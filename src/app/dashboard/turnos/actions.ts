@@ -3,16 +3,40 @@
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { BookingEstado, NivelJugador, TipoClase } from "@/generated/prisma/enums"
-import { revalidatePath } from "next/cache"
+import { revalidatePath, revalidateTag } from "next/cache"
 
 async function getTenantId(): Promise<string | null> {
   const session = await auth()
-  if (!session?.user?.id) return null
-  const user = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { tenantId: true },
-  })
-  return user?.tenantId ?? null
+  // tenantId viene del JWT — sin query a la DB
+  return session?.user?.tenantId ?? null
+}
+
+export async function initializarSlots(): Promise<{ ok: boolean; error?: string }> {
+  const session = await auth()
+  const tenantId = session?.user?.tenantId
+  if (!tenantId) return { ok: false, error: "No autenticado" }
+
+  const slotCount = await db.scheduleSlot.count({ where: { tenantId } })
+  if (slotCount > 0) return { ok: true }
+
+  const initSlots: { tenantId: string; diaSemana: number; horaInicio: string; duracionMin: number; activo: boolean }[] = []
+  for (let day = 1; day <= 6; day++) {
+    for (let hour = 8; hour <= 21; hour++) {
+      for (const min of [0, 30]) {
+        if (hour === 21 && min === 30) continue
+        initSlots.push({
+          tenantId,
+          diaSemana: day,
+          horaInicio: `${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}`,
+          duracionMin: 30,
+          activo: true,
+        })
+      }
+    }
+  }
+  await db.scheduleSlot.createMany({ data: initSlots })
+  revalidatePath("/dashboard/turnos")
+  return { ok: true }
 }
 
 export async function bloquearSlot(
@@ -286,7 +310,7 @@ export async function toggleSlotActivo(slotId: string): Promise<{ error?: string
   return {}
 }
 
-export async function setSlotNivel(slotId: string, nivel: string): Promise<{ error?: string }> {
+export async function setSlotNivel(slotId: string, nivel: string): Promise<{ error?: string; cancelados?: number }> {
   const tenantId = await getTenantId()
   if (!tenantId) return { error: "No autenticado" }
 
@@ -295,8 +319,30 @@ export async function setSlotNivel(slotId: string, nivel: string): Promise<{ err
 
   const nivelRequerido = nivel ? (nivel as NivelJugador) : null
   await db.scheduleSlot.update({ where: { id: slotId }, data: { nivelRequerido } })
+
+  // Si se restringe a un nivel, cancelar bookings futuros de alumnos que no coincidan
+  let cancelados = 0
+  if (nivelRequerido) {
+    const incompatibles = await db.booking.findMany({
+      where: {
+        slotId,
+        estado: BookingEstado.CONFIRMADO,
+        fecha: { gte: new Date() },
+        student: { nivelJugador: { not: nivelRequerido } },
+      },
+      select: { id: true },
+    })
+    if (incompatibles.length > 0) {
+      await db.booking.updateMany({
+        where: { id: { in: incompatibles.map((b) => b.id) } },
+        data: { estado: BookingEstado.CANCELADO },
+      })
+      cancelados = incompatibles.length
+    }
+  }
+
   revalidatePath("/dashboard/turnos")
-  return {}
+  return { cancelados }
 }
 
 export async function eliminarSlot(slotId: string): Promise<{ error?: string }> {
@@ -474,6 +520,7 @@ export async function confirmarSolicitud(bookingId: string): Promise<void> {
     data: { estado: BookingEstado.CONFIRMADO },
   })
 
+  revalidateTag(`tenant-${tenantId}`)
   revalidatePath("/dashboard")
   revalidatePath("/dashboard/mis-turnos")
 }
@@ -494,6 +541,7 @@ export async function rechazarSolicitud(bookingId: string): Promise<void> {
     data: { estado: BookingEstado.CANCELADO },
   })
 
+  revalidateTag(`tenant-${tenantId}`)
   revalidatePath("/dashboard")
   revalidatePath("/dashboard/mis-turnos")
 }

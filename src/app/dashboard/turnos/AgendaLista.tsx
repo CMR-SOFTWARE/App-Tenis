@@ -43,7 +43,7 @@ export type BookingInfo = {
 
 export type EmpleadoOption = { tenantId: string; nombre: string }
 
-type Student = { id: string; name: string | null; email: string }
+type Student = { id: string; name: string | null; email: string; nivelJugador: NivelJugador | null }
 
 type Props = {
   slots: SlotInfo[]
@@ -166,7 +166,11 @@ export default function AgendaCalendario({
     const val = nivel ? (nivel as NivelJugador) : null
     setLocalSlots((prev) => ({ ...prev, [slotId]: { ...prev[slotId], nivelRequerido: val } }))
     startTransition(async () => {
-      await setSlotNivel(slotId, nivel)
+      const result = await setSlotNivel(slotId, nivel)
+      if (result?.cancelados && result.cancelados > 0) {
+        setAssignError(`Se cancelaron ${result.cancelados} reserva(s) de alumnos con nivel incompatible.`)
+      }
+      router.refresh()
     })
   }
 
@@ -342,7 +346,6 @@ export default function AgendaCalendario({
                   )
                 })}
                 {assignedFromJefe.slice(0, 1).map((s) => {
-                  const bs = bookingMapAsignados.get(`${dateStr}|${s.slotId}`) ?? []
                   return (
                     <div key={s.slotId} className="hidden sm:block text-xs bg-blue-100 text-blue-700 rounded px-1 mb-0.5 truncate leading-5">
                       {s.horaInicio} {s.jefeNombre.split(" ")[0]}
@@ -478,6 +481,7 @@ export default function AgendaCalendario({
                               <option value="">+ Asignar alumno</option>
                               {students
                                 .filter((s) => !slotBookings.some((b) => b.studentId === s.id))
+                                .filter((s) => !local.nivelRequerido || s.nivelJugador === local.nivelRequerido)
                                 .map((s) => (
                                   <option key={s.id} value={s.id}>{s.name ?? s.email}</option>
                                 ))}

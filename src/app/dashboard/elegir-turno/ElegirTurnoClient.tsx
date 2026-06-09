@@ -7,6 +7,8 @@ import { NivelJugador } from "@/generated/prisma/enums"
 
 type Slot = {
   id: string
+  diaSemana: number
+  horaInicio: string
   label: string
   tipo: string
   nivelRequerido: NivelJugador | null
@@ -23,6 +25,10 @@ type Props = {
   nivelAlumno: NivelJugador | null
 }
 
+const DIA_LABEL: Record<number, string> = {
+  1: "Lun", 2: "Mar", 3: "Mié", 4: "Jue", 5: "Vie", 6: "Sáb",
+}
+
 const NIVEL_COLOR: Record<NivelJugador, string> = {
   SEPTIMA:  "bg-gray-100 text-gray-500",
   SEXTA:    "bg-blue-100 text-blue-600",
@@ -32,6 +38,7 @@ const NIVEL_COLOR: Record<NivelJugador, string> = {
   SEGUNDA:  "bg-orange-100 text-orange-700",
   PRIMERA:  "bg-red-100 text-red-700",
 }
+
 const NIVEL_LABEL: Record<NivelJugador, string> = {
   SEPTIMA:  "7ma",
   SEXTA:    "6ta",
@@ -52,6 +59,12 @@ export default function ElegirTurnoClient({ slots, nivelAlumno }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [seleccionado, setSeleccionado] = useState<string | null>(null)
 
+  const diasConSlots = [...new Set(slots.map((s) => s.diaSemana))].sort((a, b) => a - b)
+
+  const [diaActivo, setDiaActivo] = useState<number>(diasConSlots[0] ?? 1)
+
+  const slotsFiltrados = slots.filter((s) => s.diaSemana === diaActivo)
+
   function handleElegir(slotId: string) {
     setError(null)
     setSeleccionado(slotId)
@@ -67,68 +80,111 @@ export default function ElegirTurnoClient({ slots, nivelAlumno }: Props) {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-xl">
           {error}
         </div>
       )}
 
-      {slots.map((slot) => {
-        const estaCargando = isPending && seleccionado === slot.id
-        const nivelBloqueado = slot.nivelRequerido && slot.nivelRequerido !== nivelAlumno
-
-        return (
-          <button
-            key={slot.id}
-            onClick={() => handleElegir(slot.id)}
-            disabled={isPending || !!nivelBloqueado}
-            className={`w-full bg-white border rounded-2xl px-5 py-4 text-left transition-all
-              ${nivelBloqueado
-                ? "border-gray-100 opacity-40 cursor-not-allowed"
-                : "border-gray-200 hover:border-green-400 hover:shadow-sm active:scale-[0.98]"}
-              disabled:opacity-50`}
-          >
-            <div className="flex items-start justify-between gap-2 mb-2">
-              <span className="font-bold text-gray-900 text-base">
-                {estaCargando ? "Reservando..." : slot.label}
+      {/* Pills de días */}
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {diasConSlots.map((dia) => {
+          const count = slots.filter((s) => s.diaSemana === dia).length
+          const activo = dia === diaActivo
+          return (
+            <button
+              key={dia}
+              onClick={() => { setDiaActivo(dia); setError(null) }}
+              disabled={isPending}
+              className={`flex-shrink-0 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                activo
+                  ? "bg-green-700 text-white shadow-sm"
+                  : "bg-white border border-gray-200 text-gray-600 hover:border-green-400"
+              }`}
+            >
+              {DIA_LABEL[dia]}
+              <span className={`ml-1.5 text-xs font-normal ${activo ? "text-green-200" : "text-gray-400"}`}>
+                {count}
               </span>
-              <span className="text-xs text-gray-400 flex-shrink-0">{slot.tipo}</span>
-            </div>
+            </button>
+          )
+        })}
+      </div>
 
-            <div className="flex flex-wrap gap-2 text-xs">
-              {slot.nivelRequerido && (
-                <span className={`px-2 py-0.5 rounded-full font-medium ${NIVEL_COLOR[slot.nivelRequerido]}`}>
-                  {NIVEL_LABEL[slot.nivelRequerido]}
-                </span>
-              )}
-              <span className="text-gray-400">
-                {slot.lugaresLibres} lugar{slot.lugaresLibres !== 1 ? "es" : ""} libre{slot.lugaresLibres !== 1 ? "s" : ""} / {slot.capacidadMaxima}
-              </span>
-            </div>
+      {/* Contador */}
+      <p className="text-xs text-gray-400 px-1">
+        {slotsFiltrados.length} horario{slotsFiltrados.length !== 1 ? "s" : ""} disponible{slotsFiltrados.length !== 1 ? "s" : ""}
+      </p>
 
-            {slot.precioMensual !== null && (
-              <div className="mt-2 text-sm text-green-700 font-semibold">
-                {slot.esGrupal ? (
-                  <>{formatPeso(slot.precioMensual)}/mes (precio grupal fijo)</>
+      {/* Lista de slots del día activo */}
+      <div className="space-y-2">
+        {slotsFiltrados.map((slot) => {
+          const estaCargando = isPending && seleccionado === slot.id
+          const nivelBloqueado = slot.nivelRequerido && slot.nivelRequerido !== nivelAlumno
+
+          return (
+            <div
+              key={slot.id}
+              className={`bg-white border rounded-2xl px-4 py-3.5 flex items-center justify-between gap-3 transition-all ${
+                nivelBloqueado ? "opacity-40" : "border-gray-200"
+              }`}
+            >
+              {/* Info del slot */}
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="font-mono font-bold text-gray-900 text-base">{slot.horaInicio}</span>
+                  <span className="text-xs text-gray-400">{slot.tipo}</span>
+                  {slot.nivelRequerido && (
+                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${NIVEL_COLOR[slot.nivelRequerido]}`}>
+                      {NIVEL_LABEL[slot.nivelRequerido]}
+                    </span>
+                  )}
+                </div>
+
+                {slot.precioMensual !== null ? (
+                  <p className="text-sm text-green-700 font-semibold">
+                    {slot.esGrupal ? (
+                      <>{formatPeso(slot.precioMensual)}/mes</>
+                    ) : (
+                      <>
+                        {slot.precioClase !== null && (
+                          <span className="text-gray-400 font-normal text-xs mr-1">
+                            {formatPeso(slot.precioClase)}/clase ·{" "}
+                          </span>
+                        )}
+                        {formatPeso(slot.precioMensual)}/mes
+                        {slot.esCompartida && (
+                          <span className="text-green-500 font-normal text-xs ml-1">(compartida)</span>
+                        )}
+                      </>
+                    )}
+                  </p>
                 ) : (
-                  <>
-                    {slot.precioClase !== null && <>{formatPeso(slot.precioClase)}/clase · </>}
-                    {formatPeso(slot.precioMensual)}/mes
-                    {slot.esCompartida && <span className="text-green-500 font-normal"> (compartida)</span>}
-                  </>
+                  <p className="text-xs text-gray-400">
+                    {slot.lugaresLibres} lugar{slot.lugaresLibres !== 1 ? "es" : ""} libre{slot.lugaresLibres !== 1 ? "s" : ""}
+                  </p>
+                )}
+
+                {nivelBloqueado && (
+                  <p className="text-xs text-red-400 mt-0.5">
+                    Requiere {NIVEL_LABEL[slot.nivelRequerido!]}
+                  </p>
                 )}
               </div>
-            )}
 
-            {nivelBloqueado && (
-              <p className="mt-1.5 text-xs text-red-400">
-                Requiere nivel {NIVEL_LABEL[slot.nivelRequerido!]}
-              </p>
-            )}
-          </button>
-        )
-      })}
+              {/* Botón */}
+              <button
+                onClick={() => handleElegir(slot.id)}
+                disabled={isPending || !!nivelBloqueado}
+                className="flex-shrink-0 px-4 py-2 rounded-xl text-sm font-semibold bg-green-700 text-white hover:bg-green-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
+              >
+                {estaCargando ? "..." : "Solicitar"}
+              </button>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

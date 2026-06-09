@@ -3,7 +3,7 @@
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { NivelJugador } from "@/generated/prisma/enums"
-import { revalidatePath } from "next/cache"
+import { revalidatePath, revalidateTag } from "next/cache"
 
 type ActionState = { error?: string; ok?: boolean } | null
 
@@ -84,6 +84,7 @@ export async function actualizarPerfilAlumno(
     },
   })
 
+  revalidateTag("user-profile")
   revalidatePath("/dashboard/mi-perfil")
   revalidatePath("/dashboard")
   return { ok: true }

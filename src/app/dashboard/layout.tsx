@@ -1,31 +1,51 @@
 import { auth, signOut } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { redirect } from "next/navigation"
+import { unstable_cache } from "next/cache"
+import Image from "next/image"
 import { TenantTipo, UserRol } from "@/generated/prisma/enums"
 import DashboardTabs from "./DashboardTabs"
 
 type Tab = { label: string; href: string }
 
+// Cache the user+tenant fetch per userId, 2-minute TTL.
+// Eliminates the DB round-trip on every tab navigation within the dashboard.
+// Invalidated by revalidateTag("user-profile") in mi-perfil and configuracion actions.
+const getCachedUser = (userId: string) =>
+  unstable_cache(
+    () =>
+      db.user.findUnique({
+        where: { id: userId },
+        select: {
+          tenantId: true,
+          nombre: true,
+          name: true,
+          fotoPerfil: true,
+          image: true,
+          tenant: { select: { tipo: true, nombre: true } },
+        },
+      }),
+    [`dashboard-layout-user-${userId}`],
+    { revalidate: 120, tags: ["user-profile"] }
+  )()
+
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await auth()
   if (!session) redirect("/login")
 
-  const user = await db.user.findUnique({
-    where: { id: session.user.id },
-    include: { tenant: true },
-  })
+  const user = await getCachedUser(session.user.id)
 
   const esProfesor =
-    (user?.rol === UserRol.TENANT_OWNER || user?.rol === UserRol.STAFF) &&
+    (session.user.rol === UserRol.TENANT_OWNER || session.user.rol === UserRol.STAFF) &&
     user?.tenant?.tipo !== TenantTipo.CLUB
 
-  const esClub = user?.rol === UserRol.TENANT_OWNER && user?.tenant?.tipo === TenantTipo.CLUB
+  const esClub = session.user.rol === UserRol.TENANT_OWNER && user?.tenant?.tipo === TenantTipo.CLUB
 
-  // Redirects de onboarding (solo aplican a TENANT_OWNER sin tenant)
-  if ((esProfesor || (user?.rol === UserRol.TENANT_OWNER && !user?.tenantId)) && !user?.tenantId) {
+  // Redirects de onboarding — usan session.user (JWT) para evitar otra query
+  if (session.user.rol === UserRol.TENANT_OWNER && !session.user.tenantId) {
     redirect("/onboarding")
   }
-  if (user?.rol === UserRol.STUDENT && !user?.nivelJugador) {
+  if (session.user.rol === UserRol.STUDENT && !session.user.nivelJugador) {
     redirect("/onboarding/alumno")
   }
 
@@ -44,12 +64,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
       { label: "Alumnos", href: "/dashboard/alumnos" },
       { label: "Equipo", href: "/dashboard/empleados" },
       { label: "Pagos", href: "/dashboard/pagos" },
+      { label: "Servicios", href: "/dashboard/servicios" },
+      { label: "Landing", href: "/dashboard/landing" },
     ]
   } else {
     // Alumno / Student
     tabs = [
       { label: "Panel", href: "/dashboard" },
       { label: "Mis turnos", href: "/dashboard/mis-turnos" },
+      { label: "Servicios", href: "/dashboard/mis-servicios" },
       { label: "Mi perfil", href: "/dashboard/mi-perfil" },
       { label: "Pagos", href: "/dashboard/pagos" },
     ]
@@ -68,7 +91,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     session.user.email ??
     "Usuario"
 
-  const avatarSrc = user?.fotoPerfil ?? user?.image ?? null
+  const avatarSrc = user?.fotoPerfil ?? user?.image ?? session.user.image ?? null
   const avatarInitials = displayName
     .split(" ")
     .slice(0, 2)
@@ -89,8 +112,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <span className="text-sm text-gray-500 hidden sm:block">{displayName}</span>
             <div className="w-8 h-8 rounded-full overflow-hidden bg-green-100 flex items-center justify-center flex-shrink-0 border border-gray-200">
               {avatarSrc ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={avatarSrc} alt={displayName} className="w-full h-full object-cover" />
+                <Image src={avatarSrc} alt={displayName} width={32} height={32} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-xs font-bold text-green-700">{avatarInitials}</span>
               )}

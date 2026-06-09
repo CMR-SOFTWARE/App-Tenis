@@ -4,12 +4,6 @@ import { useState, Suspense } from "react"
 import { signIn } from "next-auth/react"
 import { useSearchParams, useRouter } from "next/navigation"
 
-const DEMO_USERS = [
-  { label: "Profesor", desc: "Agenda, alumnos y pagos", email: "demo.profesor@cancha.app", password: "demo1234" },
-  { label: "Jugador", desc: "Turnos, historial y pagos", email: "demo.jugador@cancha.app", password: "demo1234" },
-  { label: "Club", desc: "Panel del club", email: "demo.club@cancha.app", password: "demo1234" },
-]
-
 function LoginForm() {
   const searchParams = useSearchParams()
   const callbackUrl = searchParams.get("callbackUrl") ?? "/dashboard"
@@ -31,18 +25,6 @@ function LoginForm() {
       return
     }
     router.push(callbackUrl)
-  }
-
-  async function handleDemo(demoEmail: string, demoPassword: string) {
-    setError(null)
-    setIsLoading(true)
-    const result = await signIn("credentials", { email: demoEmail, password: demoPassword, redirect: false })
-    setIsLoading(false)
-    if (result?.error) {
-      setError("Los usuarios demo no están disponibles todavía.")
-      return
-    }
-    router.push("/dashboard")
   }
 
   return (
@@ -112,27 +94,6 @@ function LoginForm() {
           </svg>
           Continuar con Google
         </button>
-
-        {/* Modo demo */}
-        <div className="border border-gray-100 rounded-xl p-4 mb-5">
-          <p className="text-xs font-semibold text-gray-500 mb-3">Modo demo (sin base de datos real)</p>
-          <div className="space-y-2">
-            {DEMO_USERS.map((u) => (
-              <button
-                key={u.email}
-                onClick={() => handleDemo(u.email, u.password)}
-                disabled={isLoading}
-                className="w-full flex items-center justify-between bg-gray-50 hover:bg-gray-100 rounded-xl px-4 py-3 text-left transition-colors disabled:opacity-60"
-              >
-                <div>
-                  <p className="text-sm font-semibold text-gray-800">{u.label}</p>
-                  <p className="text-xs text-gray-400">{u.desc}</p>
-                </div>
-                <span className="text-gray-400 text-sm">→</span>
-              </button>
-            ))}
-          </div>
-        </div>
 
         {/* Links finales */}
         <div className="text-center space-y-2">

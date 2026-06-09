@@ -4,6 +4,7 @@ import { redirect } from "next/navigation"
 import { BookingEstado, UserRol } from "@/generated/prisma/enums"
 import AgendaLista, { type SlotInfo, type BookingInfo, type SlotAsignado, type EmpleadoOption } from "./AgendaLista"
 import CopyButton from "./CopyButton"
+import TurnosInitWrapper from "./TurnosInitWrapper"
 
 export default async function TurnosPage({
   searchParams,
@@ -19,39 +20,20 @@ export default async function TurnosPage({
   const startOfMonth = new Date(year, month - 1, 1)
   const endOfMonth = new Date(year, month, 0, 23, 59, 59)
 
-  const user = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { tenantId: true, tenant: { select: { subdominio: true } } },
-  })
-  if (!user?.tenantId) redirect("/onboarding")
+  // tenantId viene del JWT
+  const tenantId = session.user.tenantId
+  if (!tenantId) redirect("/onboarding")
 
-  // Auto-init 84 slots (Lun–Sáb × 08:00–21:00) la primera vez que el profesor entra
-  const slotCount = await db.scheduleSlot.count({ where: { tenantId: user.tenantId } })
+  // Si el profesor no tiene slots, delegar la inicialización al cliente
+  // para no bloquear el render con 260+ inserts sincrónicos
+  const slotCount = await db.scheduleSlot.count({ where: { tenantId } })
   if (slotCount === 0) {
-    const initSlots: {
-      tenantId: string
-      diaSemana: number
-      horaInicio: string
-      duracionMin: number
-      activo: boolean
-    }[] = []
-    for (let day = 1; day <= 6; day++) {
-      for (let hour = 8; hour <= 21; hour++) {
-        initSlots.push({
-          tenantId: user.tenantId,
-          diaSemana: day,
-          horaInicio: `${String(hour).padStart(2, "0")}:00`,
-          duracionMin: 60,
-          activo: true,
-        })
-      }
-    }
-    await db.scheduleSlot.createMany({ data: initSlots })
+    return <TurnosInitWrapper />
   }
 
   // Slots propios del tenant
   const rawSlots = await db.scheduleSlot.findMany({
-    where: { tenantId: user.tenantId },
+    where: { tenantId: tenantId },
     include: { empleadoTenant: { select: { nombre: true } } },
     orderBy: [{ diaSemana: "asc" }, { horaInicio: "asc" }],
   })
@@ -73,7 +55,7 @@ export default async function TurnosPage({
   // Bookings del mes para slots propios
   const rawBookings = await db.booking.findMany({
     where: {
-      slot: { tenantId: user.tenantId },
+      slot: { tenantId: tenantId },
       fecha: { gte: startOfMonth, lte: endOfMonth },
       estado: BookingEstado.CONFIRMADO,
     },
@@ -96,13 +78,13 @@ export default async function TurnosPage({
   }))
 
   const students = await db.user.findMany({
-    where: { tenantId: user.tenantId, rol: UserRol.STUDENT },
-    select: { id: true, name: true, email: true },
+    where: { tenantId: tenantId, rol: UserRol.STUDENT },
+    select: { id: true, name: true, email: true, nivelJugador: true },
   })
 
   // Lista de empleados del jefe (para el dropdown de asignación)
   const relacionesEmpleados = await db.jefeEmpleado.findMany({
-    where: { jefeTenantId: user.tenantId },
+    where: { jefeTenantId: tenantId },
     select: { empleadoTenant: { select: { id: true, nombre: true } } },
   })
   const empleados: EmpleadoOption[] = relacionesEmpleados.map((r) => ({
@@ -112,7 +94,7 @@ export default async function TurnosPage({
 
   // Slots asignados por un jefe a este profesor (cross-tenant)
   const rawSlotsAsignados = await db.scheduleSlot.findMany({
-    where: { empleadoTenantId: user.tenantId },
+    where: { empleadoTenantId: tenantId },
     include: { tenant: { select: { nombre: true, subdominio: true } } },
     orderBy: [{ diaSemana: "asc" }, { horaInicio: "asc" }],
   })
@@ -136,7 +118,7 @@ export default async function TurnosPage({
   // Bookings del mes para slots asignados (del jefe)
   const rawBookingsAsignados = await db.booking.findMany({
     where: {
-      slot: { empleadoTenantId: user.tenantId },
+      slot: { empleadoTenantId: tenantId },
       fecha: { gte: startOfMonth, lte: endOfMonth },
       estado: BookingEstado.CONFIRMADO,
     },
@@ -158,8 +140,14 @@ export default async function TurnosPage({
     studentEmail: b.student.email,
   }))
 
+  // Fetch tenant subdominio para el invite link (ligero, solo 1 campo)
+  const tenantData = await db.tenant.findUnique({
+    where: { id: tenantId },
+    select: { subdominio: true },
+  })
+
   const appUrl = process.env.NEXTAUTH_URL ?? "https://app-tenis-rho.vercel.app"
-  const inviteLink = `${appUrl}/unirse/${user.tenant?.subdominio}`
+  const inviteLink = `${appUrl}/unirse/${tenantData?.subdominio}`
 
   return (
     <div className="space-y-5">

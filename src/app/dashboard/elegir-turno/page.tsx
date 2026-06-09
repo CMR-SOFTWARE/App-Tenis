@@ -87,6 +87,8 @@ export default async function ElegirTurnoPage() {
 
     return {
       id: s.id,
+      diaSemana: s.diaSemana,
+      horaInicio: s.horaInicio,
       label: `${DIAS[s.diaSemana]} ${s.horaInicio}`,
       tipo: TIPO_LABEL[s.tipoClase],
       nivelRequerido: s.nivelRequerido,
@@ -97,6 +99,15 @@ export default async function ElegirTurnoPage() {
       esCompartida,
       esGrupal: s.tipoClase === TipoClase.GRUPAL,
     }
+  })
+
+  // Deduplicar por (diaSemana, horaInicio) — fix para duplicados en DB
+  const seen = new Set<string>()
+  const slotsDedup = slotsConInfo.filter((s) => {
+    const key = `${s.diaSemana}-${s.horaInicio}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
   })
 
   return (
@@ -113,7 +124,7 @@ export default async function ElegirTurnoPage() {
           Elegí tu horario semanal fijo. Quedás reservado para las próximas 12 semanas.
         </p>
 
-        {slotsConInfo.length === 0 ? (
+        {slotsDedup.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center">
             <p className="text-gray-500 text-sm">No hay horarios disponibles en este momento.</p>
             <p className="text-gray-400 text-xs mt-2">
@@ -121,7 +132,7 @@ export default async function ElegirTurnoPage() {
             </p>
           </div>
         ) : (
-          <ElegirTurnoClient slots={slotsConInfo} nivelAlumno={student.nivelJugador} />
+          <ElegirTurnoClient slots={slotsDedup} nivelAlumno={student.nivelJugador} />
         )}
       </main>
     </div>

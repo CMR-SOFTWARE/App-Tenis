@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { redirect } from "next/navigation"
-import { BookingEstado, NivelJugador, TenantTipo, UserRol } from "@/generated/prisma/enums"
+import { BookingEstado, NivelJugador, ResumenEstado, TenantTipo, UserRol } from "@/generated/prisma/enums"
 import ProfesorPanel from "./ProfesorPanel"
 
 const NIVEL_LABELS: Record<NivelJugador, string> = {
@@ -41,6 +41,7 @@ export default async function DashboardPage({
   // Datos para el panel del alumno
   let proximaTurno: { fecha: Date; slot: { horaInicio: string } } | null = null
   let totalClasesMes = 0
+  let resumenMes: { estado: ResumenEstado; totalMonto: number } | null = null
 
   if (esAlumno && user) {
     const now = new Date()
@@ -68,6 +69,15 @@ export default async function DashboardPage({
 
     proximaTurno = booking
     totalClasesMes = clasesMes
+
+    if (user.tenantId) {
+      const hoyResumen = new Date()
+      const mesActual = new Date(hoyResumen.getFullYear(), hoyResumen.getMonth(), 1)
+      resumenMes = await db.resumenMensual.findUnique({
+        where: { tenantId_alumnoId_mes: { tenantId: user.tenantId, alumnoId: user.id, mes: mesActual } },
+        select: { estado: true, totalMonto: true },
+      })
+    }
   }
 
   const subdominio = user?.tenant?.subdominio
@@ -162,6 +172,60 @@ export default async function DashboardPage({
               <p className="text-3xl font-black text-gray-900 leading-none">{totalClasesMes}</p>
             </div>
           </div>
+
+          {/* Mensualidad */}
+          {user.tenant && (() => {
+            if (!resumenMes) {
+              return (
+                <a
+                  href="/dashboard/pagos"
+                  className="flex items-center justify-between bg-white border border-gray-200 rounded-xl px-5 py-4 hover:bg-gray-50 transition-colors"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-gray-700">Mensualidad</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Sin resumen generado aún</p>
+                  </div>
+                  <span className="text-gray-300 text-lg">→</span>
+                </a>
+              )
+            }
+            if (resumenMes.estado === ResumenEstado.CONFIRMADO) {
+              return (
+                <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-xl px-5 py-4">
+                  <div>
+                    <p className="text-sm font-semibold text-green-800">Mensualidad pagada ✓</p>
+                    <p className="text-xs text-green-600 mt-0.5">${resumenMes.totalMonto.toLocaleString("es-AR")}</p>
+                  </div>
+                  <span className="text-green-400 text-lg">✓</span>
+                </div>
+              )
+            }
+            if (resumenMes.estado === ResumenEstado.COMPROBANTE_ENVIADO) {
+              return (
+                <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-xl px-5 py-4">
+                  <div>
+                    <p className="text-sm font-semibold text-blue-800">Comprobante enviado</p>
+                    <p className="text-xs text-blue-600 mt-0.5">Esperando confirmación del profesor</p>
+                  </div>
+                  <span className="text-blue-400 text-lg">⏳</span>
+                </div>
+              )
+            }
+            return (
+              <a
+                href="/dashboard/pagos"
+                className="flex items-center justify-between bg-amber-50 border border-amber-300 rounded-xl px-5 py-4 hover:bg-amber-100 transition-colors"
+              >
+                <div>
+                  <p className="text-sm font-semibold text-amber-900">Mensualidad pendiente</p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    ${resumenMes.totalMonto.toLocaleString("es-AR")} · Subir comprobante
+                  </p>
+                </div>
+                <span className="text-amber-500 text-lg">→</span>
+              </a>
+            )
+          })()}
 
           {/* Quick links */}
           <div className="grid grid-cols-2 gap-3">

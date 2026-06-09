@@ -80,6 +80,26 @@ enum PagoEstado {
   REEMBOLSADO
 }
 
+enum MetodoPago {
+  EFECTIVO
+  TRANSFERENCIA
+  MERCADO_PAGO
+}
+
+enum ResumenEstado {
+  PENDIENTE            // generado, alumno no pagó
+  COMPROBANTE_ENVIADO  // alumno subió el comprobante, profe no confirmó aún
+  CONFIRMADO           // profe confirmó el pago
+  VENCIDO              // pasó la fecha sin pagar
+}
+
+enum PedidoEstado {
+  PENDIENTE    // alumno pidió, profe no vio aún
+  CONFIRMADO   // profe confirmó, se incluirá en el próximo cobro
+  FACTURADO    // ya fue incluido en un ResumenMensual
+  CANCELADO    // rechazado por el profe o cancelado por el alumno
+}
+
 // ============================================================
 // TABLAS DE AUTH.JS
 // Estas tablas las necesita Auth.js para manejar sesiones y OAuth
@@ -120,15 +140,18 @@ model User {
   actualizadoEn DateTime      @updatedAt
 
   // Relaciones propias
-  reservas       Booking[]
-  pagos          Pago[]
+  reservas          Booking[]
+  pagos             Pago[]
+  resumenesMensuales ResumenMensual[]
+  pedidosServicios  PedidoServicio[] @relation("AlumnoPedidos")
   // Slots que este profe tiene asignados (solo aplica a STAFF y TENANT_OWNER)
-  slotsAsignados ScheduleSlot[] @relation("SlotProfesor")
+  slotsAsignados    ScheduleSlot[] @relation("SlotProfesor")
 
   // Relaciones de Auth.js — no las usamos directamente
   accounts      Account[]
   sessions      Session[]
 
+  @@index([tenantId, rol, alumnoEstado])
   @@map("users")
 }
 
@@ -202,9 +225,18 @@ model Tenant {
   precioPorHora     Float?                // ej: 15000 — base para cálculo de mensualidad
   ciudad            String?               // ej: "Buenos Aires"
 
-  usuarios          User[]
-  turnos            ScheduleSlot[]
-  pagos             Pago[]
+  // Contenido editable de la landing
+  galeriaFotos       String[]             // hasta 6 URLs de fotos
+  certificaciones    String[]             // ej: ["Certificado AAT", "10 años de experiencia"]
+  landingServicios   Json?                // [{icono, nombre, descripcion}]
+  landingTestimonios Json?                // [{nombre, texto, nivel}]
+
+  usuarios           User[]
+  turnos             ScheduleSlot[]
+  pagos              Pago[]
+  resumenesMensuales ResumenMensual[]
+  catalogoServicios  CatalogoServicio[]
+  pedidosServicios   PedidoServicio[]
 
   // Relaciones ProfesorClub (profesor ↔ club)
   profes            ProfesorClub[] @relation("ProfesoresDelClub")  // solo para tipo=CLUB
@@ -242,6 +274,8 @@ model ScheduleSlot {
 
   reservas    Booking[]
 
+  @@index([tenantId, activo])
+  @@index([empleadoTenantId])
   @@map("schedule_slots")
 }
 
@@ -285,6 +319,8 @@ model Booking {
   creadoEn      DateTime      @default(now())
   actualizadoEn DateTime      @updatedAt
 
+  @@index([slotId, fecha, estado])
+  @@index([studentId, fecha, estado])
   @@map("bookings")
 }
 
@@ -302,5 +338,83 @@ model Pago {
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
+  @@index([tenantId, estado, creadoEn])
   @@map("pagos")
+}
+
+model ResumenMensual {
+  id               String        @id @default(cuid())
+  tenantId         String
+  tenant           Tenant        @relation(fields: [tenantId], references: [id])
+  alumnoId         String
+  alumno           User          @relation(fields: [alumnoId], references: [id])
+
+  // Siempre el primer día del mes al que corresponde el cobro: 2026-06-01T00:00:00Z
+  mes              DateTime
+
+  // Calculado al generarse, basado en Bookings del mes anterior
+  horasTomadas     Int
+  montoClases      Float         // horasTomadas × precioPorHora (o precioGrupal fijo)
+  montoExtras      Float         @default(0)
+  totalMonto       Float         // montoClases + montoExtras
+
+  estado           ResumenEstado @default(PENDIENTE)
+  metodoPago       MetodoPago?   // lo marca el profe al confirmar
+
+  // Comprobante subido por el alumno
+  comprobanteUrl   String?
+  comprobanteFecha DateTime?
+
+  confirmadoEn     DateTime?
+  creadoEn         DateTime      @default(now())
+  actualizadoEn    DateTime      @updatedAt
+
+  extras           ExtraItem[]
+
+  // Un solo resumen por alumno por mes dentro del mismo tenant
+  @@unique([tenantId, alumnoId, mes])
+  @@map("resumenes_mensuales")
+}
+
+model ExtraItem {
+  id          String         @id @default(cuid())
+  resumenId   String
+  resumen     ResumenMensual @relation(fields: [resumenId], references: [id], onDelete: Cascade)
+  descripcion String         // "Encordado", "Tubo de pelotitas", etc.
+  monto       Float
+  creadoEn    DateTime       @default(now())
+
+  @@map("extra_items")
+}
+
+// Catálogo de servicios que ofrece el profesor (encordado, pelotitas, raquetas, etc.)
+model CatalogoServicio {
+  id       String   @id @default(cuid())
+  tenantId String
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  nombre   String
+  precio   Float
+  activo   Boolean  @default(true)
+  creadoEn DateTime @default(now())
+
+  pedidos  PedidoServicio[]
+
+  @@map("catalogo_servicios")
+}
+
+// Pedido de un alumno a su profesor (instancia de un CatalogoServicio)
+model PedidoServicio {
+  id                 String           @id @default(cuid())
+  tenantId           String
+  tenant             Tenant           @relation(fields: [tenantId], references: [id])
+  alumnoId           String
+  alumno             User             @relation("AlumnoPedidos", fields: [alumnoId], references: [id])
+  catalogoServicioId String
+  catalogoServicio   CatalogoServicio @relation(fields: [catalogoServicioId], references: [id])
+  precioSnapshot     Float            // precio al momento del pedido; inmutable aunque el catálogo cambie
+  estado             PedidoEstado     @default(PENDIENTE)
+  nota               String?          // ej: "Tensión 55 lbs, cordaje Luxilon"
+  creadoEn           DateTime         @default(now())
+
+  @@map("pedidos_servicios")
 }

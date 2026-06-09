@@ -36,12 +36,18 @@ type Props = {
   reservas: ReservaItem[]
   solicitudes: SolicitudItem[]
   slots: SlotItem[]
-  tieneTenant: boolean
 }
 
-export default function MisTurnosTabs({ reservas, solicitudes, slots, tieneTenant }: Props) {
+const DIA_LABEL: Record<number, string> = {
+  0: "Dom", 1: "Lun", 2: "Mar", 3: "Mié", 4: "Jue", 5: "Vie", 6: "Sáb",
+}
+
+export default function MisTurnosTabs({ reservas, solicitudes, slots }: Props) {
   const [tab, setTab] = useState<"clases" | "pedir">("clases")
   const [, startTransition] = useTransition()
+
+  const diasConSlots = [...new Set(slots.map((s) => s.diaSemana))].sort((a, b) => a - b)
+  const [diaActivo, setDiaActivo] = useState<number>(diasConSlots[0] ?? 1)
 
   const pendingCount = solicitudes.length
 
@@ -182,76 +188,93 @@ export default function MisTurnosTabs({ reservas, solicitudes, slots, tieneTenan
 
       {/* ── TAB 2: PEDIR TURNO ── */}
       {tab === "pedir" && (
-        <div>
+        <div className="space-y-3">
           {slots.length === 0 ? (
             <div className="text-center py-10">
               <p className="text-sm text-gray-400">No hay turnos disponibles por el momento</p>
             </div>
           ) : (
-            <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-              {slots.map((slot, i) => {
-                const lugaresLabel =
-                  slot.estado === "inscripto"
-                    ? null
-                    : slot.lugaresLibres > 0
-                    ? `${slot.lugaresLibres} libre${slot.lugaresLibres !== 1 ? "s" : ""}`
-                    : null
-
-                return (
-                  <div
-                    key={slot.id}
-                    className={`flex items-center gap-3 px-4 py-3 ${
-                      i < slots.length - 1 ? "border-b border-gray-50" : ""
-                    }`}
-                  >
-                    {/* Día + hora */}
-                    <div className="flex-1 min-w-0">
-                      <span className="text-sm text-gray-800">
-                        <span className="font-semibold w-20 inline-block">
-                          {DIAS_FULL[slot.diaSemana]}
-                        </span>
-                        <span className="text-gray-500 ml-1">{slot.horaInicio}</span>
+            <>
+              {/* Pills de días */}
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {diasConSlots.map((dia) => {
+                  const count = slots.filter((s) => s.diaSemana === dia).length
+                  const activo = dia === diaActivo
+                  return (
+                    <button
+                      key={dia}
+                      onClick={() => setDiaActivo(dia)}
+                      className={`flex-shrink-0 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                        activo
+                          ? "bg-green-700 text-white shadow-sm"
+                          : "bg-white border border-gray-200 text-gray-600 hover:border-green-400"
+                      }`}
+                    >
+                      {DIA_LABEL[dia]}
+                      <span className={`ml-1.5 text-xs font-normal ${activo ? "text-green-200" : "text-gray-400"}`}>
+                        {count}
                       </span>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[11px] text-gray-400">{slot.tipoClase}</span>
-                        {lugaresLabel && (
-                          <span className="text-[11px] text-green-600">{lugaresLabel}</span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Lista del día activo */}
+              <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+                {slots
+                  .filter((s) => s.diaSemana === diaActivo)
+                  .map((slot, i, arr) => {
+                    const lugaresLabel =
+                      slot.estado === "inscripto"
+                        ? null
+                        : slot.lugaresLibres > 0
+                        ? `${slot.lugaresLibres} libre${slot.lugaresLibres !== 1 ? "s" : ""}`
+                        : null
+
+                    return (
+                      <div
+                        key={slot.id}
+                        className={`flex items-center gap-3 px-4 py-3 ${
+                          i < arr.length - 1 ? "border-b border-gray-50" : ""
+                        }`}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm font-mono font-bold text-gray-900">{slot.horaInicio}</span>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-[11px] text-gray-400">{slot.tipoClase}</span>
+                            {lugaresLabel && (
+                              <span className="text-[11px] text-green-600">{lugaresLabel}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {slot.estado === "inscripto" ? (
+                          <span className="text-xs text-green-600 font-medium">Inscripto</span>
+                        ) : slot.estado === "solicitado" ? (
+                          <span className="text-xs text-amber-600 font-medium">Solicitado</span>
+                        ) : slot.estado === "lleno" ? (
+                          <span className="text-xs text-gray-300">Lleno</span>
+                        ) : (
+                          <button
+                            onClick={() => handleSolicitar(slot.id)}
+                            className="text-xs bg-green-700 text-white px-3 py-1.5 rounded-lg font-semibold hover:bg-green-800 transition-colors"
+                          >
+                            Solicitar
+                          </button>
                         )}
                       </div>
-                    </div>
+                    )
+                  })}
+              </div>
 
-                    {/* Estado / Acción */}
-                    {slot.estado === "inscripto" ? (
-                      <span className="text-xs text-green-600 font-medium">Inscripto</span>
-                    ) : slot.estado === "solicitado" ? (
-                      <span className="text-xs text-amber-600 font-medium">Solicitado</span>
-                    ) : slot.estado === "lleno" ? (
-                      <span className="text-xs text-gray-300">Lleno</span>
-                    ) : (
-                      <button
-                        onClick={() => handleSolicitar(slot.id)}
-                        className="text-xs bg-green-700 text-white px-3 py-1.5 rounded-lg font-semibold hover:bg-green-800 transition-colors"
-                      >
-                        Solicitar
-                      </button>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
+              <p className="text-xs text-gray-400 text-center">
+                El profesor confirma o rechaza tu solicitud
+              </p>
+            </>
           )}
-          <p className="text-xs text-gray-400 text-center mt-3">
-            El profesor confirma o rechaza tu solicitud
-          </p>
         </div>
       )}
 
-      {/* Pagar mensualidad — siempre al fondo */}
-      {tieneTenant && (
-        <button className="w-full bg-green-700 text-white py-3.5 rounded-xl font-bold text-sm hover:bg-green-800 active:scale-[0.98] transition-all">
-          Pagar mensualidad
-        </button>
-      )}
     </div>
   )
 }

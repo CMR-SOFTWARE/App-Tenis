@@ -9,6 +9,7 @@ import { headers } from "next/headers"
 import { notFound } from "next/navigation"
 import { db } from "@/lib/db"
 import Link from "next/link"
+import HorariosLanding from "./HorariosLanding"
 
 export default async function LandingPage({
   searchParams,
@@ -29,12 +30,22 @@ export default async function LandingPage({
   }
 
   // Traer los slots activos del tenant para mostrarlos en la landing
-  const slots = tenant
+  const rawSlots = tenant
     ? await db.scheduleSlot.findMany({
         where: { tenantId: tenant.id, activo: true },
+        select: { id: true, diaSemana: true, horaInicio: true, tipoClase: true, duracionMin: true },
         orderBy: [{ diaSemana: "asc" }, { horaInicio: "asc" }],
       })
     : []
+
+  // Deduplicar por (diaSemana, horaInicio)
+  const seenSlots = new Set<string>()
+  const slots = rawSlots.filter((s) => {
+    const key = `${s.diaSemana}-${s.horaInicio}`
+    if (seenSlots.has(key)) return false
+    seenSlots.add(key)
+    return true
+  })
 
   // Sin subdominio → landing central de AcePro
   if (!subdominio) {
@@ -59,8 +70,6 @@ export default async function LandingPage({
     ? `Coach certificado · ${experienciaAnios} años de experiencia`
     : "Coach certificado"
 
-  const DIAS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
-
   const stats = [
     { valor: "200+", etiqueta: "Alumnos formados" },
     { valor: experienciaAnios ? String(experienciaAnios) : "—", etiqueta: "Años de experiencia" },
@@ -68,53 +77,38 @@ export default async function LandingPage({
     { valor: "AAT", etiqueta: "Certificación" },
   ]
 
-  const servicios = [
-    {
-      nombre: "Clases individuales",
-      descripcion:
-        "Atención personalizada para trabajar en los aspectos técnicos y tácticos de tu juego.",
-      icono: "🎾",
-    },
-    {
-      nombre: "Clases grupales",
-      descripcion:
-        "Grupos reducidos de 3 a 5 alumnos de nivel similar. Más dinámica, misma calidad.",
-      icono: "👥",
-    },
-    {
-      nombre: "Preparación física",
-      descripcion:
-        "Entrenamiento físico específico para el tenis: agilidad, velocidad y resistencia.",
-      icono: "💪",
-    },
-    {
-      nombre: "Torneos y competencia",
-      descripcion:
-        "Preparación específica para competidores. Análisis táctico y manejo de la presión.",
-      icono: "🏆",
-    },
-  ]
+  type ServicioItem = { icono: string; nombre: string; descripcion: string }
+  type TestimonioItem = { nombre: string; texto: string; nivel: string }
 
-  const testimonios = [
-    {
-      nombre: "Martín G.",
-      texto:
-        "Después de 2 años mejoré muchísimo mi técnica y empecé a competir en torneos locales. Muy recomendable.",
-      nivel: "Intermedio",
-    },
-    {
-      nombre: "Laura S.",
-      texto:
-        "Empecé de cero a los 35 años y en 6 meses ya juego con mis amigas. Tiene mucha paciencia y explica muy bien.",
-      nivel: "Principiante",
-    },
-    {
-      nombre: "Federico M.",
-      texto:
-        "El mejor profesor que tuve. Se nota que le apasiona el deporte y eso se contagia en cada clase.",
-      nivel: "Avanzado",
-    },
-  ]
+  const servicios: ServicioItem[] =
+    Array.isArray(tenant!.landingServicios) && tenant!.landingServicios.length > 0
+      ? (tenant!.landingServicios as ServicioItem[])
+      : [
+          { icono: "🎾", nombre: "Clases individuales", descripcion: "Atención personalizada para trabajar en los aspectos técnicos y tácticos de tu juego." },
+          { icono: "👥", nombre: "Clases grupales", descripcion: "Grupos reducidos de 3 a 5 alumnos de nivel similar. Más dinámica, misma calidad." },
+          { icono: "💪", nombre: "Preparación física", descripcion: "Entrenamiento físico específico para el tenis: agilidad, velocidad y resistencia." },
+          { icono: "🏆", nombre: "Torneos y competencia", descripcion: "Preparación específica para competidores. Análisis táctico y manejo de la presión." },
+        ]
+
+  const testimonios: TestimonioItem[] =
+    Array.isArray(tenant!.landingTestimonios) && tenant!.landingTestimonios.length > 0
+      ? (tenant!.landingTestimonios as TestimonioItem[])
+      : [
+          { nombre: "Martín G.", texto: "Después de 2 años mejoré muchísimo mi técnica y empecé a competir en torneos locales. Muy recomendable.", nivel: "Intermedio" },
+          { nombre: "Laura S.", texto: "Empecé de cero a los 35 años y en 6 meses ya juego con mis amigas. Tiene mucha paciencia y explica muy bien.", nivel: "Principiante" },
+          { nombre: "Federico M.", texto: "El mejor profesor que tuve. Se nota que le apasiona el deporte y eso se contagia en cada clase.", nivel: "Avanzado" },
+        ]
+
+  const certificaciones: string[] =
+    tenant!.certificaciones.length > 0
+      ? tenant!.certificaciones
+      : [
+          "Certificado por la Asociación Argentina de Tenis (AAT)",
+          "Especialización en tenis juvenil y adultos",
+          "Experiencia en competencia profesional nacional",
+        ]
+
+  const galeriaFotos: string[] = tenant!.galeriaFotos.filter(Boolean)
 
   return (
     <div className="min-h-screen bg-white">
@@ -225,7 +219,7 @@ export default async function LandingPage({
                 <img
                   src={fotoPerfil}
                   alt={`Foto de ${nombre}`}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-contain"
                 />
               ) : (
                 <div className="text-center text-white/30">
@@ -254,11 +248,7 @@ export default async function LandingPage({
             </p>
 
             <div className="flex flex-col gap-3">
-              {[
-                "Certificado por la Asociación Argentina de Tenis (AAT)",
-                "Especialización en tenis juvenil y adultos",
-                "Experiencia en competencia profesional nacional",
-              ].map((item) => (
+              {certificaciones.map((item) => (
                 <div key={item} className="flex items-start gap-3">
                   <div className="w-5 h-5 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0 mt-0.5">
                     <svg className="w-3 h-3 text-green-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -314,23 +304,21 @@ export default async function LandingPage({
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {[
-              "from-green-700 to-green-900",
-              "from-green-800 to-emerald-950",
-              "from-emerald-600 to-green-800",
-              "from-green-900 to-teal-900",
-              "from-teal-700 to-green-800",
-              "from-green-700 to-emerald-900",
-            ].map((gradient, i) => (
-              <div
-                key={i}
-                className={`aspect-square rounded-2xl bg-gradient-to-br ${gradient} flex items-center justify-center`}
-              >
-                <svg className="w-10 h-10 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-              </div>
-            ))}
+            {galeriaFotos.length > 0
+              ? galeriaFotos.map((url, i) => (
+                  <div key={i} className="aspect-square rounded-2xl overflow-hidden bg-gray-100 flex items-center justify-center">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={url} alt="" className="w-full h-full object-contain" />
+                  </div>
+                ))
+              : ["from-green-700 to-green-900", "from-green-800 to-emerald-950", "from-emerald-600 to-green-800",
+                 "from-green-900 to-teal-900", "from-teal-700 to-green-800", "from-green-700 to-emerald-900"].map((g, i) => (
+                  <div key={i} className={`aspect-square rounded-2xl bg-gradient-to-br ${g} flex items-center justify-center`}>
+                    <svg className="w-10 h-10 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                ))}
           </div>
         </div>
       </section>
@@ -380,8 +368,8 @@ export default async function LandingPage({
       {/* ── TURNOS DISPONIBLES ── */}
       {slots.length > 0 && (
         <section id="turnos" className="py-24 px-6">
-          <div className="max-w-6xl mx-auto">
-            <div className="text-center mb-16">
+          <div className="max-w-3xl mx-auto">
+            <div className="text-center mb-12">
               <span className="text-green-700 font-semibold text-sm uppercase tracking-wider">
                 Horarios
               </span>
@@ -391,26 +379,7 @@ export default async function LandingPage({
               </p>
             </div>
 
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {slots.map((slot) => (
-                <div
-                  key={slot.id}
-                  className="bg-white rounded-2xl border border-gray-100 p-6 hover:shadow-lg transition-shadow"
-                >
-                  <div className="text-green-700 font-semibold text-sm mb-2">
-                    {DIAS[slot.diaSemana]}
-                  </div>
-                  <div className="text-3xl font-black text-gray-900">{slot.horaInicio}</div>
-                  <div className="text-gray-400 text-sm mt-1">{slot.duracionMin} minutos</div>
-                  <a
-                    href={`/reservar/${slot.id}`}
-                    className="mt-5 block text-center bg-green-700 text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-green-800 transition-colors"
-                  >
-                    Reservar →
-                  </a>
-                </div>
-              ))}
-            </div>
+            <HorariosLanding slots={slots} subdominio={tenant!.subdominio} />
           </div>
         </section>
       )}
